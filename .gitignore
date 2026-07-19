@@ -48,3 +48,6 @@ nbdist/
 
 # Superpowers visual brainstorming sessions
 .superpowers/
+
+# Isolated feature worktrees
+.worktrees/
