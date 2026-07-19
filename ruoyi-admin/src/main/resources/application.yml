@@ -7,7 +7,7 @@ ruoyi:
   # 版权年份
   copyrightYear: 2026
   # 文件路径 示例（ Windows配置D:/ruoyi/uploadPath，Linux配置 /home/ruoyi/uploadPath）
-  profile: D:/ruoyi/uploadPath
+  profile: /home/wufc/ai-stock
   # 获取ip地址开关
   addressEnabled: false
   # 验证码类型 math 数字计算 char 字符验证
@@ -145,3 +145,10 @@ xss:
   excludes: /system/notice
   # 匹配链接
   urlPatterns: /system/*,/monitor/*,/tool/*
+
+# DeepSeek AI 配置
+deepseek:
+  # API Key（必填，否则AI分析将跳过）
+  api-key: ${DEEPSEEK_API_KEY:}
+  # API 地址
+  base-url: https://api.deepseek.com/v1/chat/completions
