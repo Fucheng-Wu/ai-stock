@@ -5,4 +5,6 @@ import com.ruoyi.system.domain.stock.StockAnalysisResult;
 public interface IStockAnalyzerService
 {
     StockAnalysisResult analyze(String stockCode);
+
+    StockAnalysisResult analyze(String stockCode, boolean includeAi);
 }
