@@ -2,6 +2,8 @@ package com.ruoyi.system.domain.stock;
 
 public class StockAnalysisResult
 {
+    private java.util.Map<String, Object> holding;
+    private java.util.Map<String, Object> indicators;
     private StockRealtimeData stock;
     private AnalysisSignal signal;
     private String trend20ma;
@@ -24,4 +26,8 @@ public class StockAnalysisResult
     public void setAiReason(String aiReason) { this.aiReason = aiReason; }
     public String getRiskLevel() { return riskLevel; }
     public void setRiskLevel(String riskLevel) { this.riskLevel = riskLevel; }
+    public java.util.Map<String, Object> getHolding() { return holding; }
+    public void setHolding(java.util.Map<String, Object> holding) { this.holding = holding; }
+    public java.util.Map<String, Object> getIndicators() { return indicators; }
+    public void setIndicators(java.util.Map<String, Object> indicators) { this.indicators = indicators; }
 }

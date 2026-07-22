@@ -27,3 +27,11 @@ create table stock_watchlist (
 insert into sys_menu values('2003', '我的自选', '2000', '2', 'watchlist', 'stock/watchlist/index', '', '', 1, 0, 'C', '0', '0', 'stock:watchlist:list', 'star', 'admin', sysdate(), '', null, '我的自选股票');
 insert into sys_menu values('2004', '加入自选', '2003', '1', '#', '', '', '', 1, 0, 'F', '0', '0', 'stock:watchlist:add', '#', 'admin', sysdate(), '', null, '');
 insert into sys_menu values('2005', '删除自选', '2003', '2', '#', '', '', '', 1, 0, 'F', '0', '0', 'stock:watchlist:remove', '#', 'admin', sysdate(), '', null, '');
+
+create table stock_position (position_id bigint not null auto_increment,user_id bigint not null,stock_code varchar(6) not null,stock_name varchar(50),cost_price decimal(16,2) not null,quantity bigint not null,create_by varchar(64),create_time datetime,update_by varchar(64),update_time datetime,primary key(position_id),unique key uk_position_user_code(user_id,stock_code)) engine=InnoDB default charset=utf8mb4;
+create table stock_account (user_id bigint not null,total_assets decimal(16,2) not null,update_time datetime,primary key(user_id)) engine=InnoDB default charset=utf8mb4;
+insert into sys_menu values('2006','我的持仓','2000','3','position','stock/position/index','','',1,0,'C','0','0','stock:position:list','money','admin',sysdate(),'',null,'');
+insert into sys_menu values('2007','新增持仓','2006','1','#','','','',1,0,'F','0','0','stock:position:add','#','admin',sysdate(),'',null,'');
+insert into sys_menu values('2008','修改持仓','2006','2','#','','','',1,0,'F','0','0','stock:position:edit','#','admin',sysdate(),'',null,'');
+insert into sys_menu values('2009','删除持仓','2006','3','#','','','',1,0,'F','0','0','stock:position:remove','#','admin',sysdate(),'',null,'');
+insert into sys_menu values('2010','分析持仓','2006','4','#','','','',1,0,'F','0','0','stock:position:analyze','#','admin',sysdate(),'',null,'');
