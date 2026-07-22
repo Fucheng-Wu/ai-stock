@@ -5,3 +5,4 @@ export const updatePosition=data=>request({url:'/stock/position',method:'put',da
 export const account=()=>request({url:'/stock/position/account',method:'get'})
 export const saveAccount=data=>request({url:'/stock/position/account',method:'post',data})
 export const analyzePosition=(id,includeAi)=>request({url:`/stock/position/${id}/analyze`,method:'post',data:{includeAi}})
+export const getPositionAnalysis=id=>request({url:`/stock/position/${id}/analysis`,method:'get'})

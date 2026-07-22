@@ -30,6 +30,7 @@ insert into sys_menu values('2005', '删除自选', '2003', '2', '#', '', '', ''
 
 create table stock_position (position_id bigint not null auto_increment,user_id bigint not null,stock_code varchar(6) not null,stock_name varchar(50),cost_price decimal(16,2) not null,quantity bigint not null,create_by varchar(64),create_time datetime,update_by varchar(64),update_time datetime,primary key(position_id),unique key uk_position_user_code(user_id,stock_code)) engine=InnoDB default charset=utf8mb4;
 create table stock_account (user_id bigint not null,total_assets decimal(16,2) not null,update_time datetime,primary key(user_id)) engine=InnoDB default charset=utf8mb4;
+create table stock_position_analysis_snapshot (snapshot_id bigint not null auto_increment,user_id bigint not null,position_id bigint not null,analysis_json longtext not null,analyzed_at datetime not null,create_time datetime,update_time datetime,primary key(snapshot_id),unique key uk_position_analysis_snapshot_user_position(user_id,position_id)) engine=InnoDB default charset=utf8mb4;
 insert into sys_menu values('2006','我的持仓','2000','3','position','stock/position/index','','',1,0,'C','0','0','stock:position:list','money','admin',sysdate(),'',null,'');
 insert into sys_menu values('2007','新增持仓','2006','1','#','','','',1,0,'F','0','0','stock:position:add','#','admin',sysdate(),'',null,'');
 insert into sys_menu values('2008','修改持仓','2006','2','#','','','',1,0,'F','0','0','stock:position:edit','#','admin',sysdate(),'',null,'');
