@@ -8,6 +8,18 @@ import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 class StockPositionServiceImplTest {
+  @Test void infersMarketAndPersistsIt() throws Exception {
+    StockPositionServiceImpl service = new StockPositionServiceImpl(null);
+    assertEquals("sh", service.marketForCode("600519"));
+    assertEquals("sz", service.marketForCode("000001"));
+    assertEquals("sz", service.marketForCode("300750"));
+    try (InputStream input = getClass().getClassLoader().getResourceAsStream("mapper/stock/StockPositionMapper.xml")) {
+      String xml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+      assertEquals(true, xml.contains("stock_name,market,cost_price"));
+      assertEquals(true, xml.contains("#{market}"));
+    }
+  }
+
   @Test void mapsAccountColumnsExplicitly() throws Exception {
     try (InputStream input = getClass().getClassLoader().getResourceAsStream("mapper/stock/StockPositionMapper.xml")) {
       String xml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
