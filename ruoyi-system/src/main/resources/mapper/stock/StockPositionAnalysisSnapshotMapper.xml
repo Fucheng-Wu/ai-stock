@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.ruoyi.system.mapper.stock.StockPositionAnalysisSnapshotMapper">
-  <select id="select" resultType="StockPositionAnalysisSnapshot">
+  <resultMap id="Snapshot" type="StockPositionAnalysisSnapshot">
+    <id property="snapshotId" column="snapshot_id"/>
+    <result property="userId" column="user_id"/>
+    <result property="positionId" column="position_id"/>
+    <result property="analysisJson" column="analysis_json"/>
+    <result property="analyzedAt" column="analyzed_at"/>
+  </resultMap>
+  <select id="select" resultMap="Snapshot">
     select snapshot_id, user_id, position_id, analysis_json, analyzed_at
     from stock_position_analysis_snapshot where user_id=#{userId} and position_id=#{positionId}
   </select>

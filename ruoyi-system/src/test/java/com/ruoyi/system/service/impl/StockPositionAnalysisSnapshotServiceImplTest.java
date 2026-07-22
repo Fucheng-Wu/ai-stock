@@ -5,11 +5,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import com.ruoyi.system.domain.stock.StockAnalysisResult;
 import com.ruoyi.system.domain.stock.StockPositionAnalysisSnapshot;
 import com.ruoyi.system.mapper.stock.StockPositionAnalysisSnapshotMapper;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class StockPositionAnalysisSnapshotServiceImplTest {
+  @Test void mapsUnderscoreSnapshotColumnsExplicitly() throws Exception {
+    try (InputStream input = getClass().getClassLoader().getResourceAsStream("mapper/stock/StockPositionAnalysisSnapshotMapper.xml")) {
+      String xml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+      assertEquals(true, xml.contains("<resultMap id=\"Snapshot\""));
+      assertEquals(true, xml.contains("resultMap=\"Snapshot\""));
+    }
+  }
+
   @Test void savesLatestResultForOneUserAndPosition() {
     StockPositionAnalysisSnapshotServiceImpl service = new StockPositionAnalysisSnapshotServiceImpl(new MemoryMapper());
     service.save(1L, 10L, result("first"));
