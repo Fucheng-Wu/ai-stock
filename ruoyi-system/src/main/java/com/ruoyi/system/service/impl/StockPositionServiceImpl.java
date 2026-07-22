@@ -3,6 +3,7 @@ package com.ruoyi.system.service.impl;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 import org.springframework.stereotype.Service;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.system.domain.stock.StockAccount;
@@ -16,6 +17,7 @@ public class StockPositionServiceImpl implements IStockPositionService {
   public StockPositionServiceImpl(StockPositionMapper mapper) { this.mapper = mapper; }
   public BigDecimal marketValue(BigDecimal price, long quantity) { return price.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP); }
   public BigDecimal percent(BigDecimal value, BigDecimal total) { return total.signum() == 0 ? null : value.multiply(BigDecimal.valueOf(100)).divide(total, 2, RoundingMode.HALF_UP); }
+  public BigDecimal positionPercent(Map<String, Object> holding, BigDecimal totalAssets) { if (holding == null || totalAssets == null || holding.get("marketValue") == null) return null; return percent(new BigDecimal(String.valueOf(holding.get("marketValue"))), totalAssets); }
   private void valid(StockPosition p) { if (p.getCostPrice() == null || p.getCostPrice().signum() <= 0 || p.getQuantity() == null || p.getQuantity() <= 0) throw new ServiceException("invalid position"); }
   public List<StockPosition> list(Long userId) { return mapper.list(userId); }
   public StockPosition get(Long userId, Long id) { StockPosition p = mapper.select(id, userId); if (p == null) throw new ServiceException("position not found"); return p; }
