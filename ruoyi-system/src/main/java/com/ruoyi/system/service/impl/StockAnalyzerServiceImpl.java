@@ -106,6 +106,25 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         result.setAiAdvice(aiAdvice);
         result.setAiReason(aiReason);
         result.setRiskLevel(riskLevel);
+        Map<String, Object> indicators = new HashMap<>();
+        JSONObject latest = klineData.get(klineData.size() - 1);
+        JSONObject previous = klineData.get(klineData.size() - 2);
+        double currentVolume = parseDouble(latest.getString("v"));
+        double previousVolume = parseDouble(previous.getString("v"));
+        indicators.put("previousClose", stock.getPrevClose());
+        indicators.put("previousVolume", previousVolume);
+        indicators.put("volumeRatio", previousVolume == 0 ? null : currentVolume / previousVolume);
+        indicators.put("contractionRatio", previousVolume == 0 ? null : (previousVolume - currentVolume) / previousVolume);
+        indicators.put("priceVsMa5", stock.getCurrentPrice() >= stock.getMa5() ? "站上" : "跌破");
+        indicators.put("priceVsMa20", stock.getCurrentPrice() >= stock.getMa20() ? "站上" : "跌破");
+        double rangeHigh = Double.NEGATIVE_INFINITY, rangeLow = Double.POSITIVE_INFINITY;
+        int convergenceDays = 0;
+        for (int i = Math.max(0, klineData.size() - 20); i < klineData.size(); i++) {
+            JSONObject bar = klineData.get(i); rangeHigh = Math.max(rangeHigh, parseDouble(bar.getString("h"))); rangeLow = Math.min(rangeLow, parseDouble(bar.getString("l")));
+        }
+        for (int i = klineData.size() - 1; i >= 0; i--) { double ma5 = calculateMA(klineData, i, 5); double ma20 = calculateMA(klineData, i, 20); if (ma20 != 0 && Math.abs(ma5 - ma20) / ma20 <= 0.01) convergenceDays++; else break; }
+        indicators.put("rangeHigh", rangeHigh); indicators.put("rangeLow", rangeLow); indicators.put("convergenceDays", convergenceDays); indicators.put("indexTrend", "上证指数趋势待接入"); indicators.put("sectorTrend", "暂未接入");
+        result.setIndicators(indicators);
         return result;
     }
 
@@ -495,6 +514,8 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
                 signal.getReason(), signal.getSuggestedPosition()
         );
 
+        prompt += "\n三步走：第一步先判定20日线趋势是否可操作；第二步逐项判断金叉、回踩、均线粘合发散三类买点；第三步结合MA5/MA20、死叉、-5%止损、3%-5%止盈和仓位纪律给出结论。";
+
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(deepseekApiKey);
@@ -574,6 +595,14 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
     private double parseDouble(String s)
     {
         try { return Double.parseDouble(s); } catch (Exception e) { return 0.0; }
+    }
+
+    private double calculateMA(List<JSONObject> bars, int end, int days)
+    {
+        if (end < days - 1) return 0;
+        double sum = 0;
+        for (int i = end - days + 1; i <= end; i++) sum += parseDouble(bars.get(i).getString("c"));
+        return sum / days;
     }
 
     private long parseLong(String s)
