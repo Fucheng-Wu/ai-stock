@@ -160,6 +160,13 @@ import { analyzeStock } from '@/api/stock/analyzer'
 
 export default {
   name: 'StockAnalyzer',
+  created() {
+    const stockCode = this.$route.query.stockCode
+    if (typeof stockCode === 'string' && stockCode.trim()) {
+      this.stockCode = stockCode.trim()
+      this.handleAnalyze()
+    }
+  },
   data() {
     return {
       stockCode: '',

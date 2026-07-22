@@ -44,6 +44,12 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
     @Override
     public StockAnalysisResult analyze(String stockCode)
     {
+        return analyze(stockCode, true);
+    }
+
+    @Override
+    public StockAnalysisResult analyze(String stockCode, boolean includeAi)
+    {
         String code = normalizeCode(stockCode);
 
         StockRealtimeData stock = fetchRealtimeData(code);
@@ -68,7 +74,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         String aiAdvice = "";
         String aiReason = "";
         String riskLevel = "中";
-        if (StringUtils.hasText(deepseekApiKey))
+        if (shouldCallAi(includeAi) && StringUtils.hasText(deepseekApiKey))
         {
             try
             {
@@ -85,7 +91,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
                 riskLevel = "未知";
             }
         }
-        else
+        else if (shouldCallAi(includeAi))
         {
             aiAdvice = "未配置 DeepSeek API Key";
             aiReason = "请在 application.yml 中配置 deepseek.api-key";
@@ -101,6 +107,11 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         result.setAiReason(aiReason);
         result.setRiskLevel(riskLevel);
         return result;
+    }
+
+    static boolean shouldCallAi(boolean includeAi)
+    {
+        return includeAi;
     }
 
     private String normalizeCode(String code)

@@ -30,7 +30,8 @@ public class StockAnalyzerController extends BaseController
         }
         try
         {
-            StockAnalysisResult result = stockAnalyzerService.analyze(stockCode.trim());
+            boolean includeAi = !params.containsKey("includeAi") || Boolean.parseBoolean(params.get("includeAi"));
+            StockAnalysisResult result = stockAnalyzerService.analyze(stockCode.trim(), includeAi);
             return success(result);
         }
         catch (Exception e)
