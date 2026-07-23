@@ -330,15 +330,18 @@ export default {
       ]
     },
     formatNumber(value, digits = 2) {
+      if (value === null || value === undefined || value === '') return '--'
       const number = Number(value)
       return Number.isFinite(number) ? number.toFixed(digits) : '--'
     },
     signed(value) {
+      if (value === null || value === undefined || value === '') return '--'
       const number = Number(value)
       if (!Number.isFinite(number)) return '--'
       return `${number > 0 ? '+' : ''}${number.toFixed(2)}`
     },
     formatVolume(value) {
+      if (value === null || value === undefined || value === '') return '--'
       const number = Number(value)
       if (!Number.isFinite(number)) return '--'
       if (number >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
@@ -346,6 +349,7 @@ export default {
       return number.toLocaleString()
     },
     formatAmount(value) {
+      if (value === null || value === undefined || value === '') return '--'
       const number = Number(value)
       if (!Number.isFinite(number)) return '--'
       if (number >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
