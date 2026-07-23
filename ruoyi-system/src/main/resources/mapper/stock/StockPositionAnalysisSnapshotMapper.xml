@@ -14,7 +14,9 @@
   </select>
   <insert id="upsert">
     insert into stock_position_analysis_snapshot(user_id,position_id,analysis_json,analyzed_at,create_time,update_time)
-    values(#{userId},#{positionId},#{analysisJson},#{analyzedAt},sysdate(),sysdate())
+    select #{userId},#{positionId},#{analysisJson},#{analyzedAt},sysdate(),sysdate()
+    from stock_position
+    where user_id=#{userId} and position_id=#{positionId}
     on duplicate key update analysis_json=#{analysisJson},analyzed_at=#{analyzedAt},update_time=sysdate()
   </insert>
   <delete id="delete">

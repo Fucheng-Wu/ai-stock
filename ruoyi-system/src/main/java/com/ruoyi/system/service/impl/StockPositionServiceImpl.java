@@ -32,8 +32,8 @@ public class StockPositionServiceImpl implements IStockPositionService {
   public void update(Long userId, StockPosition p, String name) { valid(p); p.setUserId(userId); p.setUpdateBy(name); if (mapper.update(p) == 0) throw new ServiceException("position not found"); }
   @Transactional
   public void remove(Long userId, Long id) {
-    snapshotMapper.delete(userId, id);
     if (mapper.delete(id, userId) == 0) throw new ServiceException("position not found");
+    snapshotMapper.delete(userId, id);
   }
   public StockAccount account(Long userId) { return mapper.account(userId); }
   public void saveAccount(Long userId, StockAccount account) { if (account.getTotalAssets() == null || account.getTotalAssets().signum() <= 0) throw new ServiceException("invalid assets"); account.setUserId(userId); mapper.upsertAccount(account); }
