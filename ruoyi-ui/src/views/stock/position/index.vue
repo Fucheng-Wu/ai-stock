@@ -50,8 +50,9 @@
         row-key="positionId"
         :expand-row-keys="expanded"
         class="position-table"
+        @expand-change="handleExpandChange"
       >
-        <el-table-column type="expand" width="1">
+        <el-table-column type="expand" width="48">
           <template slot-scope="scope">
             <div v-loading="loading[scope.row.positionId]" class="stock-expand-panel position-analysis">
               <template v-if="report(scope.row)">
@@ -252,8 +253,8 @@
               v-hasPermi="['stock:position:analyze']"
               type="text"
               icon="el-icon-data-analysis"
-              @click="toggle(scope.row)"
-            >{{ expanded[0] === scope.row.positionId ? '收起' : '分析' }}</el-button>
+              @click="analyze(scope.row, false)"
+            >分析</el-button>
           </template>
         </el-table-column>
 
@@ -479,14 +480,19 @@ export default {
         this.saving = false
       })
     },
-    toggle(row) {
+    handleExpandChange(row, expandedRows) {
       const id = row.positionId
-      if (this.expanded[0] === id) {
-        this.expanded = []
+      const isExpanded = expandedRows.some(item => item.positionId === id)
+      if (!isExpanded) {
+        if (this.expanded[0] === id) this.expanded = []
         return
       }
       this.expanded = [id]
-      if (this.loaded[id]) return
+      if (this.loaded[id] || this.loading[id]) return
+      this.loadSavedAnalysis(row)
+    },
+    loadSavedAnalysis(row) {
+      const id = row.positionId
       this.$set(this.loading, id, true)
       getPositionAnalysis(id).then(res => {
         if (res.data) this.$set(this.reports, id, res.data)
