@@ -1,0 +1,21 @@
+const assert = require('assert')
+const fs = require('fs')
+const path = require('path')
+
+const uiRoot = path.resolve(__dirname, '..')
+const read = relativePath => fs.readFileSync(path.join(uiRoot, relativePath), 'utf8')
+const api = read('src/api/stock/position.js')
+const page = read('src/views/stock/position/index.vue')
+
+assert(api.includes('export const removePosition=id=>request'))
+assert(api.includes('url:`/stock/position/${id}`'))
+assert(api.includes("method:'delete'"))
+assert(page.includes("v-hasPermi=\"['stock:position:remove']\""))
+assert(page.includes('@click="handleRemove(scope.row)"'))
+assert(page.includes('handleRemove(row)'))
+assert(page.includes('removePosition(id)'))
+assert(page.includes('this.$delete(this.reports, id)'))
+assert(page.includes('this.$delete(this.analysisRequestVersions, id)'))
+assert(page.includes('this.load()'))
+
+console.log('position remove contracts passed')

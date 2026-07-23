@@ -246,7 +246,7 @@
             <span v-else class="table-secondary">--</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210" align="right" fixed="right">
+        <el-table-column label="操作" width="270" align="right" fixed="right">
           <template slot-scope="scope">
             <el-button v-hasPermi="['stock:position:edit']" type="text" icon="el-icon-edit" @click="openEdit(scope.row)">编辑</el-button>
             <el-button
@@ -255,6 +255,13 @@
               icon="el-icon-data-analysis"
               @click="analyze(scope.row, false)"
             >分析</el-button>
+            <el-button
+              v-hasPermi="['stock:position:remove']"
+              class="danger-action"
+              type="text"
+              icon="el-icon-delete"
+              @click="handleRemove(scope.row)"
+            >移除</el-button>
           </template>
         </el-table-column>
 
@@ -342,6 +349,7 @@ import {
   listPosition,
   addPosition,
   updatePosition,
+  removePosition,
   account,
   saveAccount,
   analyzePosition,
@@ -481,6 +489,25 @@ export default {
       }).finally(() => {
         this.saving = false
       })
+    },
+    handleRemove(row) {
+      const id = row.positionId
+      const stockLabel = `${row.stockName || '未命名股票'}（${row.stockCode}）`
+      this.$modal.confirm(
+        `确认移除 ${stockLabel} 吗？此操作将同时删除已保存的分析记录。`
+      ).then(() => {
+        return removePosition(id)
+      }).then(() => {
+        if (this.expanded[0] === id) this.expanded = []
+        this.$delete(this.reports, id)
+        this.$delete(this.loaded, id)
+        this.$delete(this.loading, id)
+        this.$delete(this.aiLoading, id)
+        this.$delete(this.aiShown, id)
+        this.$delete(this.analysisRequestVersions, id)
+        this.$modal.msgSuccess('移除成功')
+        this.load()
+      }).catch(() => {})
     },
     handleExpandChange(row, expandedRows) {
       const id = row.positionId
@@ -827,6 +854,10 @@ export default {
     margin-right: 5px;
     color: var(--stock-primary);
   }
+}
+
+.danger-action {
+  color: #d92d20;
 }
 
 @media (max-width: 1100px) {
