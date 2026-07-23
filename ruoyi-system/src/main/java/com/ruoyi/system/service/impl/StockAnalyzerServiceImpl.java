@@ -17,6 +17,7 @@ import org.springframework.web.client.RestTemplate;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.system.domain.stock.AnalysisSignal;
 import com.ruoyi.system.domain.stock.StockAnalysisResult;
 import com.ruoyi.system.domain.stock.StockRealtimeData;
@@ -128,6 +129,26 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         return result;
     }
 
+    @Override
+    public String resolveStockName(String stockCode)
+    {
+        if (!StringUtils.hasText(stockCode))
+        {
+            throw new ServiceException("请输入股票代码");
+        }
+        String code = normalizeCode(stockCode);
+        if (!code.matches("(sh6|sz[03])\\d{5}"))
+        {
+            throw new ServiceException("股票代码格式不正确");
+        }
+        StockRealtimeData stock = fetchRealtimeData(code);
+        if (stock == null || !StringUtils.hasText(stock.getName()))
+        {
+            throw new ServiceException("无法识别股票代码，请检查后重试");
+        }
+        return stock.getName();
+    }
+
     static boolean shouldCallAi(boolean includeAi)
     {
         return includeAi;
@@ -158,35 +179,40 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         {
             ResponseEntity<byte[]> resp = restTemplate.exchange(url, HttpMethod.GET, null, byte[].class);
             String text = new String(resp.getBody(), GBK).trim();
-            if (!text.contains("=\""))
-            {
-                return null;
-            }
-            String dataStr = text.split("=\"")[1].replace("\";", "").replace("\"", "");
-            String[] fields = dataStr.split("~");
-            if (fields.length < 45)
-            {
-                return null;
-            }
-            StockRealtimeData stock = new StockRealtimeData();
-            stock.setCode(code);
-            stock.setName(fields[1]);
-            stock.setCurrentPrice(parseDouble(fields[3]));
-            stock.setPrevClose(parseDouble(fields[4]));
-            stock.setOpenPrice(parseDouble(fields[5]));
-            stock.setHigh(parseDouble(fields[33]));
-            stock.setLow(parseDouble(fields[34]));
-            stock.setVolume(parseLong(fields[36]));
-            stock.setAmount(parseDouble(fields[37]));
-            stock.setDate(fields.length > 30 ? fields[30] : "");
-            stock.setTime(fields.length > 31 ? fields[31] : "");
-            return stock;
+            return parseTencentResponse(code, text);
         }
         catch (Exception e)
         {
             log.warn("腾讯接口获取实时数据失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    StockRealtimeData parseTencentResponse(String code, String text)
+    {
+        if (!StringUtils.hasText(text) || !text.contains("=\""))
+        {
+            return null;
+        }
+        String dataStr = text.split("=\"", 2)[1].replace("\";", "").replace("\"", "");
+        String[] fields = dataStr.split("~", -1);
+        if (fields.length < 45 || !StringUtils.hasText(fields[1]))
+        {
+            return null;
+        }
+        StockRealtimeData stock = new StockRealtimeData();
+        stock.setCode(code);
+        stock.setName(fields[1]);
+        stock.setCurrentPrice(parseDouble(fields[3]));
+        stock.setPrevClose(parseDouble(fields[4]));
+        stock.setOpenPrice(parseDouble(fields[5]));
+        stock.setHigh(parseDouble(fields[33]));
+        stock.setLow(parseDouble(fields[34]));
+        stock.setVolume(parseLong(fields[36]));
+        stock.setAmount(parseDouble(fields[37]));
+        stock.setDate(fields[30]);
+        stock.setTime(fields[31]);
+        return stock;
     }
 
     private List<JSONObject> fetchKlineData(String code)
