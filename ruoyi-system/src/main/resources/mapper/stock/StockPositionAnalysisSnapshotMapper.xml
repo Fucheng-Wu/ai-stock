@@ -17,4 +17,8 @@
     values(#{userId},#{positionId},#{analysisJson},#{analyzedAt},sysdate(),sysdate())
     on duplicate key update analysis_json=#{analysisJson},analyzed_at=#{analyzedAt},update_time=sysdate()
   </insert>
+  <delete id="delete">
+    delete from stock_position_analysis_snapshot
+    where user_id=#{userId} and position_id=#{positionId}
+  </delete>
 </mapper>

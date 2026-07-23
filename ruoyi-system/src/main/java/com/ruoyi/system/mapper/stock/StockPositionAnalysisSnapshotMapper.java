@@ -6,4 +6,5 @@ import com.ruoyi.system.domain.stock.StockPositionAnalysisSnapshot;
 public interface StockPositionAnalysisSnapshotMapper {
   StockPositionAnalysisSnapshot select(@Param("userId") Long userId, @Param("positionId") Long positionId);
   int upsert(StockPositionAnalysisSnapshot snapshot);
+  int delete(@Param("userId") Long userId, @Param("positionId") Long positionId);
 }

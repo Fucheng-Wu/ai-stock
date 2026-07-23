@@ -34,5 +34,6 @@ class StockPositionAnalysisSnapshotServiceImplTest {
     private final Map<String, StockPositionAnalysisSnapshot> values = new HashMap<>();
     public StockPositionAnalysisSnapshot select(Long userId, Long positionId) { return values.get(userId + ":" + positionId); }
     public int upsert(StockPositionAnalysisSnapshot snapshot) { values.put(snapshot.getUserId() + ":" + snapshot.getPositionId(), snapshot); return 1; }
+    public int delete(Long userId, Long positionId) { return values.remove(userId + ":" + positionId) == null ? 0 : 1; }
   }
 }
