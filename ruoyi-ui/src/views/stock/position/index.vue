@@ -278,9 +278,6 @@
         <el-form-item label="股票代码" required>
           <el-input v-model="addForm.stockCode" placeholder="例如 600519" />
         </el-form-item>
-        <el-form-item label="股票名称">
-          <el-input v-model="addForm.stockName" placeholder="选填" />
-        </el-form-item>
         <el-form-item label="成本价" required>
           <el-input-number v-model="addForm.costPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" />
         </el-form-item>
@@ -421,7 +418,7 @@ export default {
       })
     },
     openAdd() {
-      this.addForm = { stockCode: '', stockName: '', costPrice: null, quantity: null }
+      this.addForm = { stockCode: '', costPrice: null, quantity: null }
       this.addVisible = true
     },
     saveAdd() {
