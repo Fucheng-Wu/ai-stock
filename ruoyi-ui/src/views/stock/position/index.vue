@@ -347,6 +347,7 @@ import {
   analyzePosition,
   getPositionAnalysis
 } from '@/api/stock/position'
+import { nextRequestVersion, isLatestRequest } from '@/utils/request-version'
 
 export default {
   name: 'StockPosition',
@@ -364,6 +365,7 @@ export default {
       accountSummary: null,
       expanded: [],
       reports: {},
+      analysisRequestVersions: {},
       loaded: {},
       loading: {},
       aiLoading: {},
@@ -493,25 +495,33 @@ export default {
     },
     loadSavedAnalysis(row) {
       const id = row.positionId
+      const requestVersion = nextRequestVersion(this.analysisRequestVersions, id)
+      this.$set(this.aiLoading, id, false)
       this.$set(this.loading, id, true)
       getPositionAnalysis(id).then(res => {
+        if (!isLatestRequest(this.analysisRequestVersions, id, requestVersion)) return
         if (res.data) this.$set(this.reports, id, res.data)
         this.$set(this.aiShown, id, Boolean(res.data && res.data.aiAdvice))
         this.$set(this.loaded, id, true)
       }).finally(() => {
+        if (!isLatestRequest(this.analysisRequestVersions, id, requestVersion)) return
         this.$set(this.loading, id, false)
       })
     },
     analyze(row, includeAi) {
       const id = row.positionId
+      const requestVersion = nextRequestVersion(this.analysisRequestVersions, id)
       this.expanded = [id]
+      this.$set(includeAi ? this.loading : this.aiLoading, id, false)
       this.$set(includeAi ? this.aiLoading : this.loading, id, true)
       analyzePosition(id, includeAi).then(res => {
+        if (!isLatestRequest(this.analysisRequestVersions, id, requestVersion)) return
         this.$set(this.reports, id, res.data)
         this.$set(this.loaded, id, true)
         this.$set(this.aiShown, id, Boolean(res.data && res.data.aiAdvice))
         this.loadAccountSummary()
       }).finally(() => {
+        if (!isLatestRequest(this.analysisRequestVersions, id, requestVersion)) return
         this.$set(includeAi ? this.aiLoading : this.loading, id, false)
       })
     },

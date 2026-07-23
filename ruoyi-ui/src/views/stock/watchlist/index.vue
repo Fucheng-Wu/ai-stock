@@ -225,6 +225,7 @@
 <script>
 import { analyzeStock } from '@/api/stock/analyzer'
 import { addWatchlist, listWatchlist, removeWatchlist } from '@/api/stock/watchlist'
+import { nextRequestVersion, isLatestRequest } from '@/utils/request-version'
 
 export default {
   name: 'StockWatchlist',
@@ -236,6 +237,7 @@ export default {
       form: { stockCode: '', stockName: '' },
       expandedCodes: [],
       analysisByCode: {},
+      analysisRequestVersions: {},
       analysisLoading: {},
       aiLoading: {},
       aiShown: {},
@@ -297,21 +299,29 @@ export default {
     },
     loadAnalysis(row) {
       const code = row.stockCode
+      const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
       this.$set(this.aiShown, code, false)
+      this.$set(this.aiLoading, code, false)
       this.$set(this.analysisLoading, code, true)
       analyzeStock({ stockCode: code, includeAi: false }).then(res => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.analysisByCode, code, res.data)
       }).finally(() => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.analysisLoading, code, false)
       })
     },
     handleAiAnalyze(row) {
       const code = row.stockCode
+      const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
+      this.$set(this.analysisLoading, code, false)
       this.$set(this.aiLoading, code, true)
       analyzeStock({ stockCode: code, includeAi: true }).then(res => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.analysisByCode, code, res.data)
         this.$set(this.aiShown, code, true)
       }).finally(() => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.aiLoading, code, false)
       })
     },
