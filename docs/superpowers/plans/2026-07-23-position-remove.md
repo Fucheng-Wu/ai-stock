@@ -68,13 +68,13 @@ npm --prefix ruoyi-ui run test:position-remove
 
 ## Task 4: Verify the integrated change
 
-- [ ] Run all backend tests:
+- [x] Run all backend tests:
 
 ```powershell
 mvn -pl ruoyi-admin -am test
 ```
 
-- [ ] Run source and frontend contracts:
+- [x] Run source and frontend contracts:
 
 ```powershell
 node tests/stock-position-controller-contract.test.js
@@ -82,13 +82,13 @@ npm --prefix ruoyi-ui run test:stock-expand
 npm --prefix ruoyi-ui run test:position-remove
 ```
 
-- [ ] Run the frontend production build:
+- [x] Run the frontend production build:
 
 ```powershell
 npm --prefix ruoyi-ui run build:prod
 ```
 
-- [ ] Inspect whitespace, scope, commits, and worktree status:
+- [x] Inspect whitespace, scope, commits, and worktree status:
 
 ```powershell
 git diff --check
