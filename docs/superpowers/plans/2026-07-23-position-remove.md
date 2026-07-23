@@ -4,7 +4,7 @@
 
 **Goal:** Add a permission-controlled row-level remove action that permanently deletes a user's position and saved analysis snapshot while preserving account settings.
 
-**Architecture:** Delete the scoped position before its snapshot in one transaction. Make snapshot persistence conditional on the same user's position still existing, so an analysis response that arrives after removal cannot recreate orphan data. Expose a DELETE endpoint and add a confirmation-based frontend action that clears row-local state and reloads the list.
+**Architecture:** Delete the scoped position before its snapshot in one transaction. Make snapshot persistence conditional on the same user's position still existing and lock that source row in share mode, so an analysis response that arrives after removal cannot recreate orphan data under either common InnoDB isolation level. Expose a DELETE endpoint and add a confirmation-based frontend action that clears row-local state and reloads the list.
 
 **Tech Stack:** Java 17, Spring Boot, Spring Transaction, MyBatis, JUnit 5, Vue 2.6, Element UI, Node.js source contract tests
 
@@ -21,7 +21,7 @@
 - [x] Add a scoped snapshot delete mapper method using `userId + positionId`.
 - [x] Make `remove` transactional and delete the scoped position before deleting its snapshot.
 - [x] Throw `ServiceException("position not found")` without touching snapshots when the scoped position does not exist.
-- [x] Change snapshot upsert to `INSERT ... SELECT ... FROM stock_position` with matching user and position IDs.
+- [x] Change snapshot upsert to `INSERT ... SELECT ... FROM stock_position ... LOCK IN SHARE MODE` with matching user and position IDs.
 - [x] Test deletion order, missing-position behavior, transaction annotation, scoped SQL, and conditional snapshot persistence.
 - [x] Run:
 

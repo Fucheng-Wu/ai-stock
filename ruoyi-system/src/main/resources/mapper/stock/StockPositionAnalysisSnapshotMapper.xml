@@ -17,6 +17,7 @@
     select #{userId},#{positionId},#{analysisJson},#{analyzedAt},sysdate(),sysdate()
     from stock_position
     where user_id=#{userId} and position_id=#{positionId}
+    lock in share mode
     on duplicate key update analysis_json=#{analysisJson},analyzed_at=#{analyzedAt},update_time=sysdate()
   </insert>
   <delete id="delete">

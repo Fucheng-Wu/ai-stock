@@ -92,6 +92,7 @@ class StockPositionServiceImplTest {
       assertTrue(xml.contains("where user_id=#{userId} and position_id=#{positionId}"));
       assertTrue(xml.contains("select #{userId},#{positionId},#{analysisJson}"));
       assertTrue(xml.contains("from stock_position"));
+      assertTrue(xml.contains("lock in share mode"));
     }
   }
 
