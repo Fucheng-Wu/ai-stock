@@ -1,157 +1,190 @@
 <template>
-  <div class="app-container">
-    <el-card class="search-card" shadow="always">
-      <div class="search-header">
-        <span class="search-title">520均线战法 AI 分析系统</span>
+  <div class="stock-page analyzer-page">
+    <header class="stock-page__header">
+      <div>
+        <div class="stock-page__eyebrow">520 均线策略</div>
+        <h1 class="stock-page__title">AI 股票分析</h1>
+        <p class="stock-page__subtitle">结合均线趋势、交易信号与 AI 建议，快速生成结构化决策参考</p>
       </div>
-      <div class="search-body">
-        <el-input v-model="stockCode" placeholder="请输入股票代码，如 sh600519 或 600519" size="large"
-          clearable @keyup.enter.native="handleAnalyze" class="stock-input">
-          <template #prepend>股票代码</template>
-          <template #append>
-            <el-button type="primary" @click="handleAnalyze" :loading="loading" icon="el-icon-search">
-              分析
-            </el-button>
-          </template>
-        </el-input>
-        <div class="search-hint">支持 sh/sz 前缀或自动识别（6开头=上海，0/3开头=深圳）</div>
+      <div class="stock-toolbar analyzer-search">
+        <el-input
+          v-model="stockCode"
+          clearable
+          prefix-icon="el-icon-search"
+          placeholder="输入 600519 或 sh600519"
+          @keyup.enter.native="handleAnalyze"
+        />
+        <el-button type="primary" :loading="loading" @click="handleAnalyze">
+          {{ loading ? '分析中' : '开始分析' }}
+        </el-button>
       </div>
-    </el-card>
+    </header>
 
-    <el-alert v-if="errorMsg" :title="errorMsg" type="error" show-icon :closable="true"
-      @close="errorMsg = ''" class="error-alert" />
+    <el-alert
+      v-if="errorMsg"
+      class="analyzer-alert"
+      :title="errorMsg"
+      type="error"
+      show-icon
+      closable
+      @close="errorMsg = ''"
+    />
 
-    <div v-loading="loading" element-loading-text="正在分析中，请稍候..." class="loading-container">
-      <template v-if="result && !loading">
-        <el-card class="result-card stock-header-card" shadow="always">
-          <div class="stock-header">
-            <div class="stock-info">
-              <span class="stock-name">{{ result.stock.name }}</span>
-              <el-tag size="small" type="info" class="stock-code-tag">{{ result.stock.code }}</el-tag>
-            </div>
-            <div class="stock-price-section">
-              <span class="current-price" :class="priceClass">{{ result.stock.currentPrice }}</span>
-              <span class="price-unit">元</span>
-              <span class="price-change" :class="priceClass">
-                {{ result.stock.changeAmt > 0 ? '+' : '' }}{{ result.stock.changeAmt }}
-              </span>
-              <span class="price-change-pct" :class="priceClass">
-                {{ result.stock.changePct > 0 ? '+' : '' }}{{ result.stock.changePct }}%
-              </span>
-              <el-tag :type="result.stock.changePct >= 0 ? 'danger' : 'success'" size="small" effect="dark" class="change-tag">
-                {{ result.stock.changePct >= 0 ? '上涨' : '下跌' }}
-              </el-tag>
-            </div>
-          </div>
-          <div class="stock-time">{{ result.stock.date }} {{ result.stock.time }}</div>
-        </el-card>
-
-        <el-card class="result-card" shadow="always">
-          <template #header><span class="card-title">实时行情</span></template>
-          <el-row :gutter="16">
-            <el-col :xs="12" :sm="8" :md="4" v-for="item in marketData" :key="item.label">
-              <div class="stat-item">
-                <div class="stat-label">{{ item.label }}</div>
-                <div class="stat-value" :class="item.color">{{ item.value }}</div>
-                <div class="stat-unit">{{ item.unit }}</div>
+    <main v-loading="loading" element-loading-text="正在获取行情并计算均线，请稍候…" class="analyzer-content">
+      <template v-if="result && result.stock && !loading">
+        <el-card class="stock-card quote-card" shadow="never">
+          <div class="stock-quote">
+            <div class="stock-quote__main">
+              <div class="stock-identity">
+                <span class="stock-identity__avatar">{{ stockInitial }}</span>
+                <div>
+                  <span class="stock-identity__name quote-name">{{ stock.name || '未命名股票' }}</span>
+                  <span class="stock-identity__code">{{ stock.code || stockCode }}</span>
+                </div>
+                <span class="stock-badge" :class="changeBadgeClass">
+                  <i :class="priceChange >= 0 ? 'el-icon-top' : 'el-icon-bottom'" />
+                  {{ priceChange >= 0 ? '上涨' : '下跌' }}
+                </span>
               </div>
-            </el-col>
-          </el-row>
-        </el-card>
-
-        <el-row :gutter="16" class="ma-signal-row">
-          <el-col :xs="24" :md="12">
-            <el-card class="result-card ma-card" shadow="always">
-              <template #header><span class="card-title">均线数据</span></template>
-              <div class="ma-grid">
-                <div class="ma-item">
-                  <div class="ma-label">MA5 (5日均线)</div>
-                  <div class="ma-value">{{ result.stock.ma5 || '--' }}</div>
-                  <div class="ma-prev">前日: {{ result.stock.ma5Prev || '--' }}</div>
-                </div>
-                <div class="ma-item">
-                  <div class="ma-label">MA20 (20日均线)</div>
-                  <div class="ma-value">{{ result.stock.ma20 || '--' }}</div>
-                  <div class="ma-prev">前日: {{ result.stock.ma20Prev || '--' }}</div>
-                </div>
-                <div class="ma-item ma-trend-item">
-                  <div class="ma-label">20日线趋势</div>
-                  <div class="trend-indicator">
-                    <span v-if="result.trend20ma === 'UP'" class="trend-up">↑ 多头</span>
-                    <span v-else-if="result.trend20ma === 'DOWN'" class="trend-down">↓ 空头</span>
-                    <span v-else class="trend-flat">→ 震荡</span>
-                  </div>
-                  <div class="ma-prev">{{ result.trendDesc }}</div>
-                </div>
+              <div class="stock-quote__price stock-number" :class="priceClass">
+                {{ formatNumber(stock.currentPrice) }}
+                <small>元</small>
               </div>
-            </el-card>
-          </el-col>
-          <el-col :xs="24" :md="12">
-            <el-card class="result-card signal-card" shadow="always">
-              <template #header><span class="card-title">交易信号</span></template>
-              <div class="signal-content">
-                <div class="signal-type-row">
-                  <span class="signal-badge" :class="signalBadgeClass">{{ signalBadgeText }}</span>
-                  <span class="signal-desc">{{ result.signal.description }}</span>
-                </div>
-                <div class="signal-detail">
-                  <div class="signal-field">
-                    <span class="field-label">信号类型</span>
-                    <span class="field-value">{{ result.signal.type }}</span>
-                  </div>
-                  <div class="signal-field">
-                    <span class="field-label">置信度</span>
-                    <span class="field-value" :class="confidenceClass">{{ result.signal.confidence }}</span>
-                  </div>
-                  <div class="signal-field">
-                    <span class="field-label">建议仓位</span>
-                    <span class="field-value position-value">{{ result.signal.suggestedPosition }}</span>
-                  </div>
-                </div>
-                <div class="signal-reason">
-                  <div class="reason-label">系统理由</div>
-                  <div class="reason-text">{{ result.signal.reason }}</div>
-                </div>
+              <div class="stock-quote__change stock-number" :class="priceClass">
+                {{ signed(stock.changeAmt) }} &nbsp; {{ signed(stock.changePct) }}%
               </div>
-            </el-card>
-          </el-col>
-        </el-row>
-
-        <el-card class="result-card ai-card" shadow="always">
-          <template #header>
-            <div class="ai-card-header">
-              <span class="card-title">DeepSeek AI 分析报告</span>
-              <el-tag :type="riskTagType" effect="dark" size="small" class="risk-tag">
-                ⚠ 风险等级: {{ result.riskLevel }}
-              </el-tag>
             </div>
-          </template>
-          <div class="ai-content">
-            <div class="ai-advice-section">
-              <div class="advice-label">AI 操作建议</div>
-              <div class="advice-text" :class="adviceClass">{{ result.aiAdvice }}</div>
-            </div>
-            <el-divider />
-            <div class="ai-reason-section">
-              <div class="reason-label">AI 分析理由</div>
-              <div class="ai-reason-text">{{ result.aiReason }}</div>
+            <div class="stock-quote__time">
+              <i class="el-icon-time" />
+              行情时间 {{ stock.date || '--' }} {{ stock.time || '--' }}
             </div>
           </div>
         </el-card>
 
-        <el-card class="result-card rules-card" shadow="always">
-          <template #header><span class="card-title">操作纪律提醒</span></template>
-          <el-row :gutter="16">
-            <el-col :xs="24" :sm="12" :md="8" v-for="rule in tradingRules" :key="rule.id">
-              <div class="rule-item">
-                <span class="rule-num">{{ rule.id }}</span>
-                <span class="rule-text">{{ rule.text }}</span>
+        <el-card class="stock-card" shadow="never">
+          <div slot="header" class="stock-card__header">
+            <div>
+              <h2 class="stock-card__title">实时行情</h2>
+              <p class="stock-card__description">关键价格与成交数据</p>
+            </div>
+            <span class="stock-badge">数据快照</span>
+          </div>
+          <div class="stock-metric-grid">
+            <div v-for="item in marketData" :key="item.label" class="stock-metric">
+              <div class="stock-metric__label">{{ item.label }}</div>
+              <div class="stock-metric__value stock-number" :class="item.color">{{ item.value }}</div>
+              <div class="stock-metric__hint">{{ item.unit }}</div>
+            </div>
+          </div>
+        </el-card>
+
+        <div class="stock-detail-grid analyzer-strategy-grid">
+          <el-card class="stock-card strategy-card" shadow="never">
+            <div slot="header" class="stock-card__header">
+              <div>
+                <h2 class="stock-card__title">均线趋势</h2>
+                <p class="stock-card__description">MA5 与 MA20 趋势结构</p>
               </div>
-            </el-col>
-          </el-row>
+              <span class="stock-badge" :class="trendBadgeClass">{{ trendLabel }}</span>
+            </div>
+            <div class="moving-average-grid">
+              <div class="moving-average-item">
+                <span>MA5</span>
+                <strong class="stock-number">{{ formatNumber(stock.ma5) }}</strong>
+                <small>前一日 {{ formatNumber(stock.ma5Prev) }}</small>
+              </div>
+              <div class="moving-average-item">
+                <span>MA20</span>
+                <strong class="stock-number">{{ formatNumber(stock.ma20) }}</strong>
+                <small>前一日 {{ formatNumber(stock.ma20Prev) }}</small>
+              </div>
+            </div>
+            <div class="trend-summary">
+              <i :class="trendIcon" />
+              <div>
+                <strong>{{ result.trendDesc || '趋势数据暂不可用' }}</strong>
+                <span>20 日均线趋势判断</span>
+              </div>
+            </div>
+          </el-card>
+
+          <el-card class="stock-card strategy-card" shadow="never">
+            <div slot="header" class="stock-card__header">
+              <div>
+                <h2 class="stock-card__title">交易信号</h2>
+                <p class="stock-card__description">策略信号与系统仓位建议</p>
+              </div>
+              <span class="stock-badge" :class="signalBadgeClass">{{ signalBadgeText }}</span>
+            </div>
+            <div class="signal-headline">{{ signal.description || '当前未形成明确交易信号' }}</div>
+            <div class="stock-field-grid">
+              <div class="stock-field">
+                <span class="stock-field__label">信号类型</span>
+                <strong class="stock-field__value">{{ signal.type || '--' }}</strong>
+              </div>
+              <div class="stock-field">
+                <span class="stock-field__label">置信度</span>
+                <strong class="stock-field__value">{{ confidenceLabel }}</strong>
+              </div>
+              <div class="stock-field">
+                <span class="stock-field__label">建议仓位</span>
+                <strong class="stock-field__value primary-text">{{ signal.suggestedPosition || '--' }}</strong>
+              </div>
+            </div>
+            <div class="stock-callout">
+              <strong>系统判断：</strong>{{ signal.reason || '暂无进一步说明' }}
+            </div>
+          </el-card>
+        </div>
+
+        <el-card class="stock-card ai-report-card" shadow="never">
+          <div slot="header" class="stock-card__header">
+            <div>
+              <h2 class="stock-card__title">DeepSeek AI 分析报告</h2>
+              <p class="stock-card__description">基于技术指标生成的辅助分析，不构成投资建议</p>
+            </div>
+            <el-tag :type="riskTagType" size="small" effect="plain">风险等级 · {{ result.riskLevel || '未知' }}</el-tag>
+          </div>
+          <div class="stock-report">
+            <div class="stock-report__advice">
+              <span class="stock-report__icon"><i class="el-icon-cpu" /></span>
+              <div>
+                <div class="stock-report__label">AI 操作建议</div>
+                <div class="stock-report__value" :class="adviceClass">{{ result.aiAdvice || 'AI 分析暂不可用' }}</div>
+              </div>
+            </div>
+            <div class="stock-report__reason">{{ result.aiReason || '当前未返回 AI 分析理由，可先参考均线趋势与交易信号。' }}</div>
+          </div>
+        </el-card>
+
+        <el-card class="stock-card stock-card--flat" shadow="never">
+          <div slot="header" class="stock-card__header">
+            <div>
+              <h2 class="stock-card__title">操作纪律</h2>
+              <p class="stock-card__description">遵守策略边界，比预测行情更重要</p>
+            </div>
+            <i class="el-icon-lock discipline-icon" />
+          </div>
+          <ol class="stock-rule-list">
+            <li v-for="rule in tradingRules" :key="rule.id" class="stock-rule">
+              <span class="stock-rule__index">{{ String(rule.id).padStart(2, '0') }}</span>
+              <span>{{ rule.text }}</span>
+            </li>
+          </ol>
         </el-card>
       </template>
-    </div>
+
+      <el-card v-else-if="!loading" class="stock-card empty-card" shadow="never">
+        <div class="stock-empty">
+          <i class="el-icon-data-analysis stock-empty__icon" />
+          <div class="stock-empty__title">输入股票代码，生成分析报告</div>
+          <p class="stock-empty__description">
+            支持 sh/sz 前缀或 6 位代码。系统将计算 MA5、MA20、交易信号并生成 AI 辅助建议。
+          </p>
+          <el-button type="primary" plain class="empty-action" @click="focusSearch">试试 600519</el-button>
+        </div>
+      </el-card>
+    </main>
   </div>
 </template>
 
@@ -160,13 +193,6 @@ import { analyzeStock } from '@/api/stock/analyzer'
 
 export default {
   name: 'StockAnalyzer',
-  created() {
-    const stockCode = this.$route.query.stockCode
-    if (typeof stockCode === 'string' && stockCode.trim()) {
-      this.stockCode = stockCode.trim()
-      this.handleAnalyze()
-    }
-  },
   data() {
     return {
       stockCode: '',
@@ -175,49 +201,76 @@ export default {
       result: null,
       marketData: [],
       tradingRules: [
-        { id: 1, text: '20日线向下 → 坚决不进场，所有反弹都是陷阱' },
-        { id: 2, text: '金叉进场 → 首次3成仓，绝不梭哈' },
-        { id: 3, text: '跌破5日线止损 → 最大亏损控制在5%以内' },
-        { id: 4, text: '跌破20日线 → 无条件清仓，趋势已坏' },
-        { id: 5, text: '盈利3%-5% → 落袋为安，不贪心' },
-        { id: 6, text: '永远保留5成以上现金，绝不满仓' }
+        { id: 1, text: '20 日线向下时坚决不进场，所有反弹都需要保持谨慎。' },
+        { id: 2, text: '金叉进场首次使用三成仓位，不因短线波动追高。' },
+        { id: 3, text: '跌破 5 日线及时止损，将单次亏损控制在 5% 以内。' },
+        { id: 4, text: '跌破 20 日线无条件清仓，趋势破坏后等待重新确认。' },
+        { id: 5, text: '盈利达到 3%–5% 时分批落袋，不让盈利转为亏损。' },
+        { id: 6, text: '始终保留五成以上现金，不满仓、不押注单一机会。' }
       ]
     }
   },
   computed: {
+    stock() {
+      return (this.result && this.result.stock) || {}
+    },
+    signal() {
+      return (this.result && this.result.signal) || {}
+    },
+    stockInitial() {
+      const text = this.stock.name || this.stock.code || '股'
+      return text.slice(0, 1).toUpperCase()
+    },
+    priceChange() {
+      const value = Number(this.stock.changePct)
+      return Number.isFinite(value) ? value : 0
+    },
     priceClass() {
+      return this.priceChange >= 0 ? 'stock-up' : 'stock-down'
+    },
+    changeBadgeClass() {
+      return this.priceChange >= 0 ? 'stock-badge--up' : 'stock-badge--down'
+    },
+    trendLabel() {
+      const labels = { UP: '多头趋势', DOWN: '空头趋势', FLAT: '震荡整理' }
+      return labels[this.result && this.result.trend20ma] || '趋势未知'
+    },
+    trendBadgeClass() {
       if (!this.result) return ''
-      return this.result.stock.changePct >= 0 ? 'price-up' : 'price-down'
+      if (this.result.trend20ma === 'UP') return 'stock-badge--up'
+      if (this.result.trend20ma === 'DOWN') return 'stock-badge--down'
+      return 'stock-badge--warning'
+    },
+    trendIcon() {
+      if (!this.result) return 'el-icon-minus'
+      if (this.result.trend20ma === 'UP') return 'el-icon-top stock-up'
+      if (this.result.trend20ma === 'DOWN') return 'el-icon-bottom stock-down'
+      return 'el-icon-minus'
     },
     signalBadgeClass() {
-      if (!this.result) return ''
       const map = {
-        'GOLDEN_CROSS': 'badge-golden',
-        'GOLDEN_CROSS_WEAK': 'badge-weak',
-        'DEATH_CROSS': 'badge-death',
-        'RETRACE': 'badge-retrace',
-        'CONVERGENCE': 'badge-convergence',
-        'NONE': 'badge-none'
+        GOLDEN_CROSS: 'stock-badge--up',
+        GOLDEN_CROSS_WEAK: 'stock-badge--warning',
+        DEATH_CROSS: 'stock-badge--down',
+        RETRACE: 'stock-badge--primary',
+        CONVERGENCE: 'stock-badge--primary'
       }
-      return map[this.result.signal.type] || 'badge-none'
+      return map[this.signal.type] || ''
     },
     signalBadgeText() {
-      if (!this.result) return ''
       const map = {
-        'GOLDEN_CROSS': '金叉',
-        'GOLDEN_CROSS_WEAK': '弱金叉',
-        'DEATH_CROSS': '死叉',
-        'RETRACE': '回踩',
-        'CONVERGENCE': '粘合发散',
-        'NONE': '无信号'
+        GOLDEN_CROSS: '金叉',
+        GOLDEN_CROSS_WEAK: '弱金叉',
+        DEATH_CROSS: '死叉',
+        RETRACE: '回踩',
+        CONVERGENCE: '粘合发散',
+        NONE: '暂无信号'
       }
-      return map[this.result.signal.type] || '无信号'
+      return map[this.signal.type] || '暂无信号'
     },
-    confidenceClass() {
-      if (!this.result) return ''
-      if (this.result.signal.confidence === 'HIGH') return 'conf-high'
-      if (this.result.signal.confidence === 'MEDIUM') return 'conf-medium'
-      return 'conf-low'
+    confidenceLabel() {
+      const map = { HIGH: '高', MEDIUM: '中', LOW: '低' }
+      return map[this.signal.confidence] || this.signal.confidence || '--'
     },
     riskTagType() {
       if (!this.result) return 'info'
@@ -227,13 +280,17 @@ export default {
       return 'info'
     },
     adviceClass() {
-      if (!this.result) return ''
-      const advice = this.result.aiAdvice || ''
-      if (advice.includes('买入') || advice.includes('加仓')) return 'advice-buy'
-      if (advice.includes('持有')) return 'advice-hold'
-      if (advice.includes('观望')) return 'advice-watch'
-      if (advice.includes('卖出') || advice.includes('止损') || advice.includes('清仓')) return 'advice-sell'
+      const advice = (this.result && this.result.aiAdvice) || ''
+      if (advice.includes('买入') || advice.includes('加仓')) return 'stock-up'
+      if (advice.includes('卖出') || advice.includes('止损') || advice.includes('清仓')) return 'stock-down'
       return ''
+    }
+  },
+  created() {
+    const stockCode = this.$route.query.stockCode
+    if (typeof stockCode === 'string' && stockCode.trim()) {
+      this.stockCode = stockCode.trim()
+      this.handleAnalyze()
     }
   },
   methods: {
@@ -250,359 +307,188 @@ export default {
         this.result = res.data
         this.buildMarketData()
       }).catch(err => {
-        this.errorMsg = err.msg || '分析失败，请检查股票代码是否正确'
+        this.errorMsg = err.msg || '分析失败，请检查股票代码是否正确后重试'
       }).finally(() => {
         this.loading = false
       })
     },
     buildMarketData() {
-      if (!this.result) return
-      const s = this.result.stock
+      if (!this.result || !this.result.stock) {
+        this.marketData = []
+        return
+      }
+      const stock = this.result.stock
+      const highClass = Number(stock.high) >= Number(stock.prevClose) ? 'stock-up' : 'stock-down'
+      const lowClass = Number(stock.low) >= Number(stock.prevClose) ? 'stock-up' : 'stock-down'
       this.marketData = [
-        { label: '开盘价', value: s.openPrice.toFixed(2), unit: '元', color: '' },
-        { label: '昨收价', value: s.prevClose.toFixed(2), unit: '元', color: '' },
-        { label: '最高价', value: s.high.toFixed(2), unit: '元', color: s.currentPrice >= s.prevClose ? 'price-up' : 'price-down' },
-        { label: '最低价', value: s.low.toFixed(2), unit: '元', color: '' },
-        { label: '成交量', value: this.formatVolume(s.volume), unit: '手', color: '' },
-        { label: '成交额', value: this.formatAmount(s.amount), unit: '元', color: '' }
+        { label: '开盘价', value: this.formatNumber(stock.openPrice), unit: '人民币 / 元', color: '' },
+        { label: '昨收价', value: this.formatNumber(stock.prevClose), unit: '人民币 / 元', color: '' },
+        { label: '最高价', value: this.formatNumber(stock.high), unit: '今日最高', color: highClass },
+        { label: '最低价', value: this.formatNumber(stock.low), unit: '今日最低', color: lowClass },
+        { label: '成交量', value: this.formatVolume(stock.volume), unit: '成交手数', color: '' },
+        { label: '成交额', value: this.formatAmount(stock.amount), unit: '人民币', color: '' }
       ]
     },
-    formatVolume(vol) {
-      if (vol >= 10000) return (vol / 10000).toFixed(2) + '万'
-      return vol.toLocaleString()
+    formatNumber(value, digits = 2) {
+      const number = Number(value)
+      return Number.isFinite(number) ? number.toFixed(digits) : '--'
     },
-    formatAmount(amt) {
-      if (amt >= 100000000) return (amt / 100000000).toFixed(2) + '亿'
-      if (amt >= 10000) return (amt / 10000).toFixed(2) + '万'
-      return amt.toLocaleString()
+    signed(value) {
+      const number = Number(value)
+      if (!Number.isFinite(number)) return '--'
+      return `${number > 0 ? '+' : ''}${number.toFixed(2)}`
+    },
+    formatVolume(value) {
+      const number = Number(value)
+      if (!Number.isFinite(number)) return '--'
+      if (number >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
+      if (number >= 10000) return `${(number / 10000).toFixed(2)} 万`
+      return number.toLocaleString()
+    },
+    formatAmount(value) {
+      const number = Number(value)
+      if (!Number.isFinite(number)) return '--'
+      if (number >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
+      if (number >= 10000) return `${(number / 10000).toFixed(2)} 万`
+      return number.toLocaleString()
+    },
+    focusSearch() {
+      this.stockCode = '600519'
     }
   }
 }
 </script>
 
-<style scoped>
-.app-container {
-  max-width: 1200px;
-  margin: 0 auto;
+<style lang="scss">
+@import "~@/assets/styles/stock-management.scss";
+</style>
+
+<style lang="scss" scoped>
+.analyzer-search {
+  flex-wrap: nowrap;
+  width: min(100%, 520px);
+
+  .el-input {
+    flex: 1;
+  }
+}
+
+.analyzer-alert {
+  margin-bottom: 16px;
+  border-radius: 8px;
+}
+
+.analyzer-content {
+  min-height: 280px;
+}
+
+.quote-card {
+  border-top: 3px solid var(--stock-primary);
+}
+
+.quote-name {
+  font-size: 17px;
+}
+
+.stock-quote__price small {
+  color: var(--stock-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.moving-average-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.moving-average-item {
   padding: 16px;
-}
-.search-card {
-  margin-bottom: 20px;
   border-radius: 8px;
+  background: #f8fafc;
+
+  span,
+  small {
+    display: block;
+    color: var(--stock-muted);
+    font-size: 12px;
+  }
+
+  strong {
+    display: block;
+    margin: 8px 0 5px;
+    color: var(--stock-text);
+    font-size: 24px;
+  }
 }
-.search-header {
-  margin-bottom: 6px;
-}
-.search-title {
-  font-size: 20px;
-  font-weight: 700;
-  background: linear-gradient(135deg, #1890ff, #722ed1);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.search-body {
-  display: flex;
-  flex-direction: column;
-}
-.stock-input {
-  max-width: 520px;
-}
-.search-hint {
-  font-size: 12px;
-  color: #999;
-  margin-top: 8px;
-}
-.error-alert {
-  margin-bottom: 16px;
-}
-.loading-container {
-  min-height: 200px;
-}
-.result-card {
-  margin-bottom: 16px;
-  border-radius: 8px;
-}
-.stock-header-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
-  border: none;
-}
-.stock-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.stock-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.stock-name {
-  font-size: 28px;
-  font-weight: 700;
-}
-.stock-code-tag {
-  font-size: 14px;
-}
-.stock-price-section {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.current-price {
-  font-size: 36px;
-  font-weight: 700;
-}
-.price-unit {
-  font-size: 14px;
-  opacity: 0.8;
-}
-.price-change, .price-change-pct {
-  font-size: 18px;
-  font-weight: 600;
-}
-.change-tag {
-  font-size: 14px;
-  padding: 4px 10px;
-}
-.stock-time {
-  font-size: 13px;
-  opacity: 0.7;
-  margin-top: 8px;
-}
-.card-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-.stat-item {
-  text-align: center;
-  padding: 12px 8px;
-  border-radius: 6px;
-  background: #fafafa;
-  transition: all 0.3s;
-  margin-bottom: 12px;
-}
-.stat-item:hover {
-  background: #f0f5ff;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-}
-.stat-label {
-  font-size: 13px;
-  color: #888;
-  margin-bottom: 4px;
-}
-.stat-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: #333;
-}
-.stat-unit {
-  font-size: 11px;
-  color: #aaa;
-  margin-top: 2px;
-}
-.ma-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-.ma-item {
-  flex: 1;
-  min-width: 180px;
-  padding: 12px 16px;
-  background: #fafafa;
-  border-radius: 6px;
-  text-align: center;
-}
-.ma-label {
-  font-size: 13px;
-  color: #888;
-  margin-bottom: 6px;
-}
-.ma-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #333;
-}
-.ma-prev {
-  font-size: 12px;
-  color: #aaa;
-  margin-top: 4px;
-}
-.trend-up { color: #cf1322; font-weight: 700; font-size: 20px; }
-.trend-down { color: #389e0d; font-weight: 700; font-size: 20px; }
-.trend-flat { color: #8c8c8c; font-weight: 700; font-size: 20px; }
-.signal-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.signal-type-row {
+
+.trend-summary {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--stock-border);
+
+  > i {
+    font-size: 22px;
+  }
+
+  strong,
+  span {
+    display: block;
+  }
+
+  strong {
+    color: var(--stock-text);
+    font-size: 14px;
+  }
+
+  span {
+    margin-top: 4px;
+    color: var(--stock-muted);
+    font-size: 12px;
+  }
 }
-.signal-badge {
-  display: inline-block;
-  padding: 6px 18px;
-  border-radius: 20px;
-  font-size: 16px;
-  font-weight: 700;
-  color: #fff;
-}
-.badge-golden { background: #52c41a; }
-.badge-weak { background: #faad14; }
-.badge-death { background: #ff4d4f; }
-.badge-retrace { background: #1890ff; }
-.badge-convergence { background: #722ed1; }
-.badge-none { background: #8c8c8c; }
-.signal-desc {
-  font-size: 16px;
+
+.signal-headline {
+  margin-bottom: 10px;
+  color: var(--stock-text);
+  font-size: 17px;
   font-weight: 600;
-  color: #333;
-}
-.signal-detail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-  padding: 8px 0;
-}
-.signal-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.field-label {
-  font-size: 13px;
-  color: #888;
-}
-.field-value {
-  font-size: 14px;
-  font-weight: 600;
-}
-.conf-high { color: #52c41a; }
-.conf-medium { color: #faad14; }
-.conf-low { color: #ff4d4f; }
-.position-value {
-  color: #1890ff;
-}
-.signal-reason {
-  padding: 10px 14px;
-  background: #fffbe6;
-  border-left: 3px solid #faad14;
-  border-radius: 4px;
-}
-.reason-label {
-  font-size: 13px;
-  color: #888;
-  margin-bottom: 4px;
-}
-.reason-text, .ai-reason-text {
-  font-size: 14px;
   line-height: 1.6;
-  color: #555;
 }
-.ai-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+
+.primary-text {
+  color: var(--stock-primary);
 }
-.risk-tag {
-  font-size: 14px;
-  padding: 6px 14px;
+
+.discipline-icon {
+  color: var(--stock-primary);
+  font-size: 20px;
 }
-.ai-content {
-  padding: 8px 0;
+
+.empty-card {
+  min-height: 320px;
 }
-.ai-advice-section {
-  text-align: center;
-  padding: 16px;
+
+.empty-action {
+  margin-top: 18px;
 }
-.advice-label {
-  font-size: 14px;
-  color: #888;
-  margin-bottom: 8px;
+
+@media (max-width: 768px) {
+  .analyzer-search {
+    width: 100%;
+  }
 }
-.advice-text {
-  font-size: 28px;
-  font-weight: 700;
-  padding: 8px 24px;
-  display: inline-block;
-  border-radius: 8px;
-}
-.advice-buy {
-  color: #cf1322;
-  background: #fff1f0;
-}
-.advice-hold {
-  color: #1890ff;
-  background: #e6f7ff;
-}
-.advice-watch {
-  color: #faad14;
-  background: #fffbe6;
-}
-.advice-sell {
-  color: #389e0d;
-  background: #f6ffed;
-}
-.ai-reason-section {
-  padding: 8px 16px;
-}
-.rules-card {
-  background: #fafafa;
-}
-.rule-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  background: #fff;
-  border-radius: 4px;
-  border-left: 3px solid #1890ff;
-  transition: all 0.2s;
-}
-.rule-item:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-  transform: translateX(2px);
-}
-.rule-num {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  background: #1890ff;
-  color: #fff;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-}
-.rule-text {
-  font-size: 13px;
-  color: #555;
-  line-height: 1.5;
-}
-.price-up { color: #cf1322 !important; }
-.price-down { color: #389e0d !important; }
-.ma-signal-row {
-  margin-left: -8px;
-  margin-right: -8px;
-}
-.ma-signal-row .el-col {
-  padding-left: 8px;
-  padding-right: 8px;
-}
-.el-divider--horizontal {
-  margin: 16px 0;
+
+@media (max-width: 480px) {
+  .analyzer-search {
+    flex-direction: column;
+  }
+
+  .moving-average-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
