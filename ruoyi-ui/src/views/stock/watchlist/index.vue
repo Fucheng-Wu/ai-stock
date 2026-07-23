@@ -50,8 +50,9 @@
         row-key="stockCode"
         :expand-row-keys="expandedCodes"
         class="watchlist-table"
+        @expand-change="handleExpandChange"
       >
-        <el-table-column type="expand" width="1">
+        <el-table-column type="expand" width="48">
           <template slot-scope="scope">
             <div v-loading="analysisLoading[scope.row.stockCode]" class="stock-expand-panel watchlist-analysis">
               <template v-if="analysis(scope.row)">
@@ -197,7 +198,7 @@
         <el-table-column label="操作" width="190" align="right" fixed="right">
           <template slot-scope="scope">
             <el-button type="text" icon="el-icon-data-analysis" @click="handleAnalyze(scope.row)">
-              {{ expandedCodes[0] === scope.row.stockCode ? '收起' : '分析' }}
+              分析
             </el-button>
             <el-button
               v-hasPermi="['stock:watchlist:remove']"
@@ -278,13 +279,24 @@ export default {
         this.adding = false
       })
     },
-    handleAnalyze(row) {
+    handleExpandChange(row, expandedRows) {
       const code = row.stockCode
-      if (this.expandedCodes[0] === code) {
-        this.expandedCodes = []
+      const isExpanded = expandedRows.some(item => item.stockCode === code)
+      if (!isExpanded) {
+        if (this.expandedCodes[0] === code) this.expandedCodes = []
         return
       }
       this.expandedCodes = [code]
+      if (this.analysisByCode[code] || this.analysisLoading[code]) return
+      this.loadAnalysis(row)
+    },
+    handleAnalyze(row) {
+      this.expandedCodes = [row.stockCode]
+      this.$set(this.aiShown, row.stockCode, false)
+      this.loadAnalysis(row)
+    },
+    loadAnalysis(row) {
+      const code = row.stockCode
       this.$set(this.aiShown, code, false)
       this.$set(this.analysisLoading, code, true)
       analyzeStock({ stockCode: code, includeAi: false }).then(res => {
