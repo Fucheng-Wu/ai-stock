@@ -51,3 +51,5 @@ nbdist/
 
 # Isolated feature worktrees
 .worktrees/
+
+.worktrees/
