@@ -107,7 +107,7 @@ assert(defaultPayload.savedAt >= beforeSave && defaultPayload.savedAt <= afterSa
 const helperSource = fs.readFileSync(path.resolve(__dirname, '../src/utils/stock-analyzer-session.js'), 'utf8')
 assert(!/\b(?:localStorage|sessionStorage)\b/.test(helperSource), 'helper must depend only on injected storage')
 
-const analyzerSource = fs.readFileSync(path.resolve(__dirname, '../src/views/stock/analyzer/index.vue'), 'utf8')
+const analyzerSource = fs.readFileSync(path.resolve(__dirname, '../src/views/stock/analyzer/index.vue'), 'utf8').replace(/\r\n/g, '\n')
 assert(
   analyzerSource.includes("import { saveAnalysisSession, loadAnalysisSession } from '@/utils/stock-analyzer-session'"),
   'analyzer must import both session helpers'
