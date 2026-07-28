@@ -2,7 +2,9 @@ package com.ruoyi.system.service.impl;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +22,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.system.domain.stock.AnalysisSignal;
 import com.ruoyi.system.domain.stock.StockAnalysisResult;
+import com.ruoyi.system.domain.stock.StockKlineData;
 import com.ruoyi.system.domain.stock.StockRealtimeData;
 import com.ruoyi.system.service.IStockAnalyzerService;
 
@@ -32,6 +35,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
     private static final String SINA_KLINE_API = "https://quotes.sina.cn/cn/api/jsonp.php/var_KC_MarketDataService.getKLineData=/KC_MarketDataService.getKLineData?symbol=%s&scale=240&datalen=300";
     private static final String DEEPSEEK_MODEL = "deepseek-chat";
     private static final Charset GBK = Charset.forName("GBK");
+    private static final int KLINE_DISPLAY_DAYS = 60;
 
     @Autowired
     private RestTemplate restTemplate;
@@ -107,6 +111,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         result.setAiAdvice(aiAdvice);
         result.setAiReason(aiReason);
         result.setRiskLevel(riskLevel);
+        result.setKlineData(buildKlineChartData(klineData));
         Map<String, Object> indicators = new HashMap<>();
         JSONObject latest = klineData.get(klineData.size() - 1);
         JSONObject previous = klineData.get(klineData.size() - 2);
@@ -276,6 +281,110 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
             }
         }
         return result;
+    }
+
+    List<StockKlineData> buildKlineChartData(List<JSONObject> bars)
+    {
+        List<StockKlineData> validBars = new ArrayList<>();
+        if (bars == null)
+        {
+            return validBars;
+        }
+
+        for (JSONObject bar : bars)
+        {
+            if (bar == null)
+            {
+                continue;
+            }
+            String date = readBarValue(bar, "day", "d");
+            Double open = parseKlineDouble(readBarValue(bar, "open", "o"));
+            Double close = parseKlineDouble(readBarValue(bar, "close", "c"));
+            Double high = parseKlineDouble(readBarValue(bar, "high", "h"));
+            Double low = parseKlineDouble(readBarValue(bar, "low", "l"));
+            if (!isValidKlineDate(date) || open == null || close == null || high == null || low == null)
+            {
+                continue;
+            }
+
+            StockKlineData kline = new StockKlineData();
+            kline.setDate(date.trim());
+            kline.setOpen(open);
+            kline.setClose(close);
+            kline.setHigh(high);
+            kline.setLow(low);
+            Long volume = parseKlineLong(readBarValue(bar, "volume", "v"));
+            kline.setVolume(volume == null ? 0L : volume);
+            validBars.add(kline);
+        }
+
+        validBars.sort(Comparator.comparing(StockKlineData::getDate));
+        List<Double> closes = new ArrayList<>();
+        for (StockKlineData kline : validBars)
+        {
+            closes.add(kline.getClose());
+        }
+        List<Double> ma5 = calcMA(closes, 5);
+        List<Double> ma10 = calcMA(closes, 10);
+        List<Double> ma20 = calcMA(closes, 20);
+        for (int i = 0; i < validBars.size(); i++)
+        {
+            StockKlineData kline = validBars.get(i);
+            kline.setMa5(ma5.get(i));
+            kline.setMa10(ma10.get(i));
+            kline.setMa20(ma20.get(i));
+        }
+
+        int displayStart = Math.max(0, validBars.size() - KLINE_DISPLAY_DAYS);
+        return new ArrayList<>(validBars.subList(displayStart, validBars.size()));
+    }
+
+    private String readBarValue(JSONObject bar, String longKey, String shortKey)
+    {
+        String value = bar.getString(longKey);
+        return value != null ? value : bar.getString(shortKey);
+    }
+
+    private boolean isValidKlineDate(String date)
+    {
+        if (!StringUtils.hasText(date))
+        {
+            return false;
+        }
+        try
+        {
+            LocalDate.parse(date.trim());
+            return true;
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+    }
+
+    private Double parseKlineDouble(String value)
+    {
+        try
+        {
+            double parsed = Double.parseDouble(value);
+            return Double.isFinite(parsed) ? parsed : null;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    private Long parseKlineLong(String value)
+    {
+        try
+        {
+            return Long.parseLong(value);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
     }
 
     private String detectTrend20ma(StockRealtimeData stock)

@@ -1,5 +1,7 @@
 package com.ruoyi.system.domain.stock;
 
+import java.util.List;
+
 public class StockAnalysisResult
 {
     private java.util.Map<String, Object> holding;
@@ -11,6 +13,7 @@ public class StockAnalysisResult
     private String aiAdvice;
     private String aiReason;
     private String riskLevel;
+    private List<StockKlineData> klineData;
 
     public StockRealtimeData getStock() { return stock; }
     public void setStock(StockRealtimeData stock) { this.stock = stock; }
@@ -30,4 +33,6 @@ public class StockAnalysisResult
     public void setHolding(java.util.Map<String, Object> holding) { this.holding = holding; }
     public java.util.Map<String, Object> getIndicators() { return indicators; }
     public void setIndicators(java.util.Map<String, Object> indicators) { this.indicators = indicators; }
+    public List<StockKlineData> getKlineData() { return klineData; }
+    public void setKlineData(List<StockKlineData> klineData) { this.klineData = klineData; }
 }
