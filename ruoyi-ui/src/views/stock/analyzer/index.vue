@@ -32,6 +32,11 @@
 
     <main v-loading="loading" element-loading-text="正在获取行情并计算均线，请稍候…" class="analyzer-content">
       <template v-if="result && result.stock && !loading">
+        <stock-kline-chart
+          :kline-data="result.klineData || []"
+          :updated-at="formattedResultSavedAt"
+        />
+
         <el-card class="stock-card quote-card" shadow="never">
           <div class="stock-quote">
             <div class="stock-quote__main">
@@ -190,15 +195,21 @@
 
 <script>
 import { analyzeStock } from '@/api/stock/analyzer'
+import StockKlineChart from './components/StockKlineChart.vue'
+import { saveAnalysisSession, loadAnalysisSession } from '@/utils/stock-analyzer-session'
 
 export default {
   name: 'StockAnalyzer',
+  components: {
+    StockKlineChart
+  },
   data() {
     return {
       stockCode: '',
       loading: false,
       errorMsg: '',
       result: null,
+      resultSavedAt: null,
       marketData: [],
       tradingRules: [
         { id: 1, text: '20 日线向下时坚决不进场，所有反弹都需要保持谨慎。' },
@@ -211,6 +222,10 @@ export default {
     }
   },
   computed: {
+    formattedResultSavedAt() {
+      if (!this.resultSavedAt) return ''
+      return new Date(this.resultSavedAt).toLocaleString('zh-CN', { hour12: false })
+    },
     stock() {
       return (this.result && this.result.stock) || {}
     },
@@ -287,6 +302,7 @@ export default {
     }
   },
   created() {
+    this.restoreLastAnalysis()
     const stockCode = this.$route.query.stockCode
     if (typeof stockCode === 'string' && stockCode.trim()) {
       this.stockCode = stockCode.trim()
@@ -294,6 +310,14 @@ export default {
     }
   },
   methods: {
+    restoreLastAnalysis() {
+      const session = loadAnalysisSession(window.sessionStorage)
+      if (!session) return
+      this.stockCode = session.stockCode
+      this.result = session.result
+      this.resultSavedAt = session.savedAt
+      this.buildMarketData()
+    },
     handleAnalyze() {
       const code = this.stockCode.trim()
       if (!code) {
@@ -303,9 +327,13 @@ export default {
       this.loading = true
       this.errorMsg = ''
       this.result = null
+      this.resultSavedAt = null
       analyzeStock({ stockCode: code }).then(res => {
         this.result = res.data
         this.buildMarketData()
+        const savedAt = Date.now()
+        this.resultSavedAt = savedAt
+        saveAnalysisSession(window.sessionStorage, code, this.result, savedAt)
       }).catch(err => {
         this.errorMsg = err.msg || '分析失败，请检查股票代码是否正确后重试'
       }).finally(() => {

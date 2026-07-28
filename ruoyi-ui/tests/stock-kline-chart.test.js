@@ -81,6 +81,25 @@ assert(!invalidTooltip.includes('0.00'))
 const componentPath = path.resolve(__dirname, '../src/views/stock/analyzer/components/StockKlineChart.vue')
 assert(fs.existsSync(componentPath), 'StockKlineChart component must exist')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
+const analyzerPath = path.resolve(__dirname, '../src/views/stock/analyzer/index.vue')
+const analyzerSource = fs.readFileSync(analyzerPath, 'utf8')
+const resultTemplateIndex = analyzerSource.indexOf('<template v-if="result && result.stock && !loading">')
+const analyzerChartIndex = analyzerSource.indexOf('<stock-kline-chart', resultTemplateIndex)
+const quoteCardIndex = analyzerSource.indexOf('class="stock-card quote-card"', resultTemplateIndex)
+
+assert(resultTemplateIndex >= 0, 'analyzer must keep the successful-result template')
+assert(analyzerChartIndex > resultTemplateIndex, 'analyzer must render the K-line chart inside the successful-result template')
+assert(quoteCardIndex > analyzerChartIndex, 'K-line chart must be the first result card before the quote card')
+assert(
+  /<stock-kline-chart\s+:kline-data="result\.klineData \|\| \[\]"\s+:updated-at="formattedResultSavedAt"\s*\/>/s.test(analyzerSource),
+  'analyzer must pass safe K-line data and the formatted saved timestamp to the chart'
+)
+assert(
+  analyzerSource.includes("import StockKlineChart from './components/StockKlineChart.vue'"),
+  'analyzer must import StockKlineChart'
+)
+assert(/components:\s*{\s*StockKlineChart\s*}/s.test(analyzerSource), 'analyzer must register StockKlineChart')
+assert(!analyzerSource.includes('localStorage'), 'analyzer must not use localStorage')
 const mountedMatch = componentSource.match(/mounted\(\)\s*{([\s\S]*?)\n  },\n  beforeDestroy\(\)/)
 assert(mountedMatch, 'component must define a mounted lifecycle block')
 const mountedSource = mountedMatch[1]
