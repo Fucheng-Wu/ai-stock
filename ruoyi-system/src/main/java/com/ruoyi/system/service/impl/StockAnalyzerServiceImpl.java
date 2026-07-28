@@ -342,7 +342,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
     private String readBarValue(JSONObject bar, String longKey, String shortKey)
     {
         String value = bar.getString(longKey);
-        return value != null ? value : bar.getString(shortKey);
+        return StringUtils.hasText(value) ? value : bar.getString(shortKey);
     }
 
     private boolean isValidKlineDate(String date)

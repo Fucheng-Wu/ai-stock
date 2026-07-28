@@ -113,6 +113,30 @@ class StockAnalyzerServiceImplTest
         assertNull(result.get(0).getMa20());
     }
 
+    @Test
+    void fallsBackToShortKlineFieldsWhenLongAliasesAreBlank()
+    {
+        StockAnalyzerServiceImpl service = new StockAnalyzerServiceImpl();
+        JSONObject bar = shortBar("2026-01-01", "10", "11", "12", "9", "1000");
+        bar.put("day", "");
+        bar.put("open", "");
+        bar.put("close", "");
+        bar.put("high", "");
+        bar.put("low", "");
+        bar.put("volume", "");
+
+        List<StockKlineData> result = service.buildKlineChartData(Arrays.asList(bar));
+
+        assertEquals(1, result.size());
+        StockKlineData kline = result.get(0);
+        assertEquals("2026-01-01", kline.getDate());
+        assertEquals(10.0, kline.getOpen());
+        assertEquals(11.0, kline.getClose());
+        assertEquals(12.0, kline.getHigh());
+        assertEquals(9.0, kline.getLow());
+        assertEquals(1000L, kline.getVolume());
+    }
+
     private JSONObject shortBar(String date, String open, String close, String high, String low, String volume)
     {
         JSONObject bar = new JSONObject();
