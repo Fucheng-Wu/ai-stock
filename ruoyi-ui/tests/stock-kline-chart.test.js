@@ -1,4 +1,6 @@
 const assert = require('assert')
+const fs = require('fs')
+const path = require('path')
 
 let chartUtils = {}
 try {
@@ -74,5 +76,30 @@ assert(invalidTooltip.includes('开盘：--'))
 assert(invalidTooltip.includes('收盘：--'))
 assert(invalidTooltip.includes('MA5：--'))
 assert(!invalidTooltip.includes('0.00'))
+
+const componentPath = path.resolve(__dirname, '../src/views/stock/analyzer/components/StockKlineChart.vue')
+assert(fs.existsSync(componentPath), 'StockKlineChart component must exist')
+const componentSource = fs.readFileSync(componentPath, 'utf8')
+
+assert(componentSource.includes("import * as echarts from 'echarts'"), 'component must import echarts')
+assert(componentSource.includes("import { buildStockKlineOption } from '@/utils/stock-kline'"), 'component must import the K-line option builder')
+assert(componentSource.includes("name: 'StockKlineChart'"), 'component must use the StockKlineChart name')
+assert(componentSource.includes('klineData:'), 'component must define the klineData prop')
+assert(componentSource.includes('updatedAt:'), 'component must define the updatedAt prop')
+assert(componentSource.includes('近三个月日 K'), 'component must render the K-line title')
+assert(componentSource.includes('日 K、MA5 / MA10 / MA20 与成交量'), 'component must render the K-line description')
+assert(componentSource.includes('`${klineData.length} 个交易日`'), 'component must render the real trading-day count')
+assert(componentSource.includes('更新时间'), 'component must render the update timestamp when supplied')
+assert(componentSource.includes('ref="chart"'), 'component must expose the chart container ref')
+assert(componentSource.includes('暂无 K 线数据'), 'component must render the empty state')
+assert(componentSource.includes('buildStockKlineOption(this.klineData)'), 'component must build options from its prop data')
+assert(componentSource.includes("window.addEventListener('resize'"), 'component must register a resize listener')
+assert(componentSource.includes("window.removeEventListener('resize'"), 'component must remove the resize listener')
+assert(componentSource.includes('.dispose()'), 'component must dispose its chart instance')
+assert(componentSource.includes('this.chart = null'), 'component must clear the chart instance after disposal')
+assert(componentSource.includes('height: 520px'), 'desktop chart height must be 520px')
+assert(componentSource.includes('height: 420px'), 'mobile chart height must be 420px')
+assert(!componentSource.includes('analyzeStock'), 'component must not call the analysis API')
+assert(!componentSource.includes('sessionStorage'), 'component must not access sessionStorage')
 
 console.log('stock kline chart contracts passed')
