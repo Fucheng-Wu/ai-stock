@@ -1,6 +1,7 @@
 const assert = require('assert')
 const fs = require('fs')
 const path = require('path')
+const vm = require('vm')
 
 let chartUtils = {}
 try {
@@ -111,7 +112,9 @@ assert(/handleResize\(\)\s*{\s*if \(this\.chart\)\s*{\s*this\.chart\.resize\(\)/
 assert(componentSource.includes("window.removeEventListener('resize', this.handleResize)"), 'component must remove the resize listener')
 assert(/if \(!this\.hasKlineData\)\s*{\s*this\.disposeChart\(\)/s.test(componentSource), 'empty data must dispose the existing chart')
 assert(/disposeChart\(\)\s*{\s*if \(this\.chart\)\s*{\s*this\.chart\.dispose\(\)\s*this\.chart = null/s.test(componentSource), 'disposing must release the chart and clear its reference')
-assert(/beforeDestroy\(\)\s*{\s*window\.removeEventListener\('resize', this\.handleResize\)\s*this\.disposeChart\(\)/s.test(componentSource), 'beforeDestroy must remove the listener and dispose the chart')
+assert(/data\(\)\s*{\s*return\s*{\s*chart: null,\s*isDestroyed: false/s.test(componentSource), 'component must track whether it has been destroyed')
+assert(/beforeDestroy\(\)\s*{\s*this\.isDestroyed = true\s*window\.removeEventListener\('resize', this\.handleResize\)\s*this\.disposeChart\(\)/s.test(componentSource), 'beforeDestroy must mark destruction, remove the listener, and dispose the chart')
+assert(/renderChart\(\)\s*{\s*if \(this\.isDestroyed\) return/s.test(componentSource), 'renderChart must ignore queued work after destruction')
 assert(/\.stock-kline-chart__canvas\s*{\s*height: 520px/s.test(componentSource), 'desktop chart height must be 520px')
 assert(/@media \(max-width: 768px\)[\s\S]*?\.stock-kline-chart__canvas\s*{\s*height: 420px/s.test(componentSource), 'mobile chart height must be 420px under the narrow breakpoint')
 assert(/\.stock-kline-chart__empty\s*{\s*display: flex;\s*align-items: center;\s*justify-content: center;\s*min-height: 240px/s.test(componentSource), 'empty state must be centered with a 240px minimum height')
@@ -121,5 +124,141 @@ assert(/@media \(max-width: 768px\)[\s\S]*?\.stock-kline-chart__metadata\s*{\s*j
 assert(/@media \(max-width: 768px\)[\s\S]*?\.stock-kline-chart__updated-at\s*{\s*white-space: normal;/s.test(componentSource), 'narrow update metadata must allow wrapping')
 assert(!componentSource.includes('analyzeStock'), 'component must not call the analysis API')
 assert(!componentSource.includes('sessionStorage'), 'component must not access sessionStorage')
+
+function evaluateKlineComponent(echarts, buildOption, windowMock) {
+  const scriptMatch = componentSource.match(/<script>\s*([\s\S]*?)\s*<\/script>/)
+  assert(scriptMatch, 'component must contain an executable script block')
+
+  const executableScript = scriptMatch[1]
+    .replace("import * as echarts from 'echarts'", 'const echarts = injectedEcharts')
+    .replace("import { buildStockKlineOption } from '@/utils/stock-kline'", 'const buildStockKlineOption = injectedBuildOption')
+    .replace('export default', 'module.exports =')
+  const sandbox = {
+    module: { exports: {} },
+    injectedEcharts: echarts,
+    injectedBuildOption: buildOption,
+    window: windowMock
+  }
+
+  vm.runInNewContext(executableScript, sandbox, { filename: 'StockKlineChart.vue' })
+  return sandbox.module.exports
+}
+
+function createLifecycleHarness(klineData) {
+  const nextTickQueue = []
+  const listenerEvents = { added: [], removed: [] }
+  const charts = []
+  const buildOptionCalls = []
+  const windowMock = {
+    addEventListener(type, handler) {
+      listenerEvents.added.push({ type, handler })
+    },
+    removeEventListener(type, handler) {
+      listenerEvents.removed.push({ type, handler })
+    }
+  }
+  const echarts = {
+    init(element) {
+      const chart = {
+        element,
+        disposed: 0,
+        resizeCalls: 0,
+        setOptionCalls: [],
+        setOption(option, replace) {
+          this.setOptionCalls.push({ option, replace })
+        },
+        resize() {
+          this.resizeCalls += 1
+        },
+        dispose() {
+          this.disposed += 1
+        }
+      }
+      charts.push(chart)
+      return chart
+    }
+  }
+  const buildOption = bars => {
+    buildOptionCalls.push(bars)
+    return { bars }
+  }
+  const definition = evaluateKlineComponent(echarts, buildOption, windowMock)
+  const instance = {
+    klineData,
+    updatedAt: '',
+    $refs: { chart: { id: 'chart-element' } },
+    $nextTick(callback) {
+      nextTickQueue.push(callback)
+    }
+  }
+
+  Object.assign(instance, definition.data.call(instance))
+  Object.keys(definition.methods).forEach(name => {
+    instance[name] = definition.methods[name].bind(instance)
+  })
+  Object.defineProperty(instance, 'hasKlineData', {
+    get() {
+      return definition.computed.hasKlineData.call(instance)
+    }
+  })
+
+  return {
+    definition,
+    instance,
+    charts,
+    buildOptionCalls,
+    listenerEvents,
+    flushNextTicks() {
+      while (nextTickQueue.length) {
+        nextTickQueue.shift()()
+      }
+    }
+  }
+}
+
+const lifecycleBars = [{ date: '2026-07-27', open: 10, close: 11, high: 12, low: 9, volume: 1000 }]
+const lifecycleHarness = createLifecycleHarness(lifecycleBars)
+const lifecycleInstance = lifecycleHarness.instance
+lifecycleHarness.definition.mounted.call(lifecycleInstance)
+assert.deepStrictEqual(lifecycleHarness.listenerEvents.added.map(event => event.type), ['resize'], 'mounted must register the resize listener')
+assert.strictEqual(lifecycleHarness.charts.length, 0, 'mounted must defer chart initialization until nextTick')
+lifecycleHarness.flushNextTicks()
+assert.strictEqual(lifecycleHarness.charts.length, 1, 'mounted must initialize one chart after nextTick')
+assert.strictEqual(lifecycleHarness.charts[0].setOptionCalls.length, 1, 'mounted must set the initial option once')
+assert.strictEqual(lifecycleHarness.charts[0].setOptionCalls[0].replace, true, 'chart options must replace prior options')
+
+lifecycleInstance.klineData = lifecycleBars.concat({ date: '2026-07-28', open: 11, close: 10, high: 12, low: 9, volume: 800 })
+lifecycleHarness.definition.watch.klineData.handler.call(lifecycleInstance)
+lifecycleHarness.flushNextTicks()
+assert.strictEqual(lifecycleHarness.charts.length, 1, 'watch updates must reuse the existing chart instance')
+assert.strictEqual(lifecycleHarness.charts[0].setOptionCalls.length, 2, 'watch updates must set a fresh option')
+assert.strictEqual(lifecycleHarness.buildOptionCalls[1], lifecycleInstance.klineData, 'watch updates must build options from the latest prop data')
+
+lifecycleInstance.handleResize()
+assert.strictEqual(lifecycleHarness.charts[0].resizeCalls, 1, 'resize handler must resize the active chart')
+
+lifecycleInstance.klineData = []
+lifecycleHarness.definition.watch.klineData.handler.call(lifecycleInstance)
+lifecycleHarness.flushNextTicks()
+assert.strictEqual(lifecycleHarness.charts[0].disposed, 1, 'empty data must dispose the existing chart')
+assert.strictEqual(lifecycleInstance.chart, null, 'empty data must clear the chart reference')
+
+lifecycleInstance.klineData = lifecycleBars
+lifecycleHarness.definition.watch.klineData.handler.call(lifecycleInstance)
+lifecycleHarness.flushNextTicks()
+assert.strictEqual(lifecycleHarness.charts.length, 2, 'new nonempty data must initialize a replacement chart')
+assert.strictEqual(lifecycleHarness.charts[1].setOptionCalls.length, 1, 'replacement chart must receive its initial option')
+
+lifecycleHarness.definition.beforeDestroy.call(lifecycleInstance)
+assert.deepStrictEqual(lifecycleHarness.listenerEvents.removed.map(event => event.type), ['resize'], 'beforeDestroy must remove the resize listener')
+assert.strictEqual(lifecycleHarness.charts[1].disposed, 1, 'beforeDestroy must dispose the active chart')
+assert.strictEqual(lifecycleInstance.chart, null, 'beforeDestroy must clear the chart reference')
+
+const destroyedBeforeFlushHarness = createLifecycleHarness(lifecycleBars)
+destroyedBeforeFlushHarness.definition.mounted.call(destroyedBeforeFlushHarness.instance)
+destroyedBeforeFlushHarness.definition.beforeDestroy.call(destroyedBeforeFlushHarness.instance)
+destroyedBeforeFlushHarness.flushNextTicks()
+assert.strictEqual(destroyedBeforeFlushHarness.charts.length, 0, 'queued renders must not initialize a chart after destruction')
+assert.strictEqual(destroyedBeforeFlushHarness.instance.chart, null, 'queued renders must leave a destroyed instance chartless')
 
 console.log('stock kline chart contracts passed')

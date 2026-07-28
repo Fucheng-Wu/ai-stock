@@ -36,7 +36,8 @@ export default {
   },
   data() {
     return {
-      chart: null
+      chart: null,
+      isDestroyed: false
     }
   },
   computed: {
@@ -57,11 +58,14 @@ export default {
     this.$nextTick(() => this.renderChart())
   },
   beforeDestroy() {
+    this.isDestroyed = true
     window.removeEventListener('resize', this.handleResize)
     this.disposeChart()
   },
   methods: {
     renderChart() {
+      if (this.isDestroyed) return
+
       if (!this.hasKlineData) {
         this.disposeChart()
         return
