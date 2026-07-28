@@ -55,10 +55,20 @@ assert.strictEqual(loadAnalysisSession(createMemoryStorage({
 ;[
   {},
   { stockCode: 600519, result, savedAt },
+  { stockCode: '', result, savedAt },
+  { stockCode: '   ', result, savedAt },
+  { stockCode: '\t\n', result, savedAt },
   { stockCode: 'sh600519', savedAt },
   { stockCode: 'sh600519', result: null, savedAt },
+  { stockCode: 'sh600519', result: [], savedAt },
   { stockCode: 'sh600519', result: {}, savedAt },
   { stockCode: 'sh600519', result: { stock: null }, savedAt },
+  { stockCode: 'sh600519', result: { stock: false }, savedAt },
+  { stockCode: 'sh600519', result: { stock: 'sh600519' }, savedAt },
+  { stockCode: 'sh600519', result: { stock: [] }, savedAt },
+  { stockCode: 'sh600519', result, savedAt: 0 },
+  { stockCode: 'sh600519', result, savedAt: -1 },
+  { stockCode: 'sh600519', result, savedAt: 1.5 },
   { stockCode: 'sh600519', result, savedAt: '1785225600000' },
   { stockCode: 'sh600519', result, savedAt: null }
 ].forEach(payload => {

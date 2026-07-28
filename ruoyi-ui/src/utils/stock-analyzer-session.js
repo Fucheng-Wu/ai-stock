@@ -25,11 +25,17 @@ function loadAnalysisSession(storage) {
       !cached ||
       typeof cached !== 'object' ||
       typeof cached.stockCode !== 'string' ||
+      !cached.stockCode.trim() ||
       !cached.result ||
       typeof cached.result !== 'object' ||
+      Array.isArray(cached.result) ||
       !cached.result.stock ||
+      typeof cached.result.stock !== 'object' ||
+      Array.isArray(cached.result.stock) ||
       typeof cached.savedAt !== 'number' ||
-      !Number.isFinite(cached.savedAt)
+      !Number.isFinite(cached.savedAt) ||
+      !Number.isInteger(cached.savedAt) ||
+      cached.savedAt <= 0
     ) {
       return null
     }
