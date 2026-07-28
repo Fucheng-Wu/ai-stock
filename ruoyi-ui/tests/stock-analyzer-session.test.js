@@ -156,20 +156,21 @@ function evaluateAnalyzer(options) {
 
 function createAnalyzerHarness(overrides) {
   const storage = overrides.storage || {}
+  const windowMock = overrides.window || { sessionStorage: storage }
   const definition = evaluateAnalyzer({
     analyzeStock: overrides.analyzeStock || (() => { throw new Error('unexpected analyzeStock call') }),
     saveAnalysisSession: overrides.saveAnalysisSession || (() => { throw new Error('unexpected saveAnalysisSession call') }),
     loadAnalysisSession: overrides.loadAnalysisSession || (() => null),
-    window: { sessionStorage: storage }
+    window: windowMock
   })
   const instance = Object.assign(definition.data(), {
     $route: { query: {} },
-    $message: { warning() {} }
+    $message: overrides.message || { warning() {} }
   })
   Object.keys(definition.methods).forEach(name => {
     instance[name] = definition.methods[name].bind(instance)
   })
-  return { definition, instance, storage }
+  return { definition, instance, storage, window: windowMock }
 }
 
 const restoredResult = {
@@ -255,4 +256,128 @@ assert.strictEqual(saveCalls[0][2], successfulResult)
 assert.strictEqual(saveCalls[0][3], successHarness.instance.resultSavedAt, 'saved cache must use the displayed result timestamp')
 assert.strictEqual(successHarness.instance.loading, false, 'successful analysis must finish loading')
 
-console.log('stock analyzer session contracts passed')
+function flushPromiseChain() {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
+function createDeferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+async function runAsyncPageContracts() {
+  const securityError = new Error('session storage is blocked')
+  securityError.name = 'SecurityError'
+  const blockedWindow = {}
+  Object.defineProperty(blockedWindow, 'sessionStorage', {
+    get() {
+      throw securityError
+    }
+  })
+  const blockedResult = { stock: { code: 'sh600000' }, klineData: [] }
+  let blockedMarketBuilds = 0
+  const blockedStorageHarness = createAnalyzerHarness({
+    window: blockedWindow,
+    analyzeStock: () => Promise.resolve({ data: blockedResult }),
+    saveAnalysisSession,
+    loadAnalysisSession
+  })
+  blockedStorageHarness.instance.stockCode = 'sh600000'
+  blockedStorageHarness.instance.result = restoredResult
+  blockedStorageHarness.instance.resultSavedAt = restoredAt
+  blockedStorageHarness.instance.buildMarketData = () => { blockedMarketBuilds += 1 }
+
+  assert.doesNotThrow(
+    () => blockedStorageHarness.instance.restoreLastAnalysis(),
+    'restore must tolerate a sessionStorage getter that throws SecurityError'
+  )
+  assert.strictEqual(blockedStorageHarness.instance.stockCode, 'sh600000')
+  assert.strictEqual(blockedStorageHarness.instance.result, restoredResult)
+  assert.strictEqual(blockedStorageHarness.instance.resultSavedAt, restoredAt)
+  assert.strictEqual(blockedMarketBuilds, 0, 'failed storage access must not rebuild or mutate restored cards')
+
+  blockedStorageHarness.instance.handleAnalyze()
+  await flushPromiseChain()
+  assert.strictEqual(blockedStorageHarness.instance.result, blockedResult)
+  assert.strictEqual(typeof blockedStorageHarness.instance.resultSavedAt, 'number')
+  assert.strictEqual(blockedMarketBuilds, 1, 'successful analysis must still build cards when storage is blocked')
+  assert.strictEqual(blockedStorageHarness.instance.loading, false, 'blocked persistence must not break request completion')
+
+  const firstRequest = createDeferred()
+  let overlapAnalyzeCalls = 0
+  const overlapResult = { stock: { code: 'sh600519' }, klineData: [] }
+  const overlapHarness = createAnalyzerHarness({
+    analyzeStock() {
+      overlapAnalyzeCalls += 1
+      return overlapAnalyzeCalls === 1
+        ? firstRequest.promise
+        : Promise.resolve({ data: { stock: { code: 'sz000001' }, klineData: [] } })
+    },
+    saveAnalysisSession: () => true
+  })
+  overlapHarness.instance.stockCode = 'sh600519'
+  overlapHarness.instance.handleAnalyze()
+  assert.strictEqual(overlapHarness.instance.loading, true, 'first request must own the loading state while pending')
+  const stateBeforeDuplicate = {
+    loading: overlapHarness.instance.loading,
+    errorMsg: overlapHarness.instance.errorMsg,
+    result: overlapHarness.instance.result,
+    resultSavedAt: overlapHarness.instance.resultSavedAt
+  }
+
+  overlapHarness.instance.stockCode = 'sz000001'
+  overlapHarness.instance.handleAnalyze()
+  assert.strictEqual(overlapAnalyzeCalls, 1, 'a loading analyzer must not start a duplicate request')
+  assert.deepStrictEqual({
+    loading: overlapHarness.instance.loading,
+    errorMsg: overlapHarness.instance.errorMsg,
+    result: overlapHarness.instance.result,
+    resultSavedAt: overlapHarness.instance.resultSavedAt
+  }, stateBeforeDuplicate, 'duplicate triggers must not mutate the active request state')
+  assert.strictEqual(overlapHarness.instance.loading, true, 'duplicate trigger must not release the first request loading state')
+
+  firstRequest.resolve({ data: overlapResult })
+  await flushPromiseChain()
+  assert.strictEqual(overlapHarness.instance.result, overlapResult)
+  assert.strictEqual(overlapHarness.instance.loading, false, 'loading must clear only after the first request settles')
+
+  let blankAnalyzeCalls = 0
+  let blankWarnings = 0
+  const blankHarness = createAnalyzerHarness({
+    analyzeStock() {
+      blankAnalyzeCalls += 1
+      return Promise.resolve({ data: overlapResult })
+    },
+    message: { warning() { blankWarnings += 1 } }
+  })
+  blankHarness.instance.stockCode = '   '
+  blankHarness.instance.handleAnalyze()
+  assert.strictEqual(blankAnalyzeCalls, 0, 'blank stock code must not start analysis')
+  assert.strictEqual(blankWarnings, 1, 'blank stock code must retain its validation warning')
+
+  assert(
+    /handleAnalyze\(\)\s*{\s*if \(this\.loading\) return\s*const code = this\.stockCode\.trim\(\)/s.test(analyzerSource),
+    'handleAnalyze must reject loading-state reentry before validation or request mutation'
+  )
+
+  const storageAccessorSource = analyzerSource.match(/getSessionStorage\(\)\s*{([\s\S]*?)\n    },/)
+  assert(storageAccessorSource, 'analyzer must expose a guarded session storage accessor')
+  assert(/try\s*{\s*return window\.sessionStorage\s*}\s*catch \([^)]*\)\s*{\s*return null\s*}/s.test(storageAccessorSource[1]))
+  assert.strictEqual(
+    (analyzerSource.match(/window\.sessionStorage/g) || []).length,
+    1,
+    'raw window.sessionStorage access must exist only inside the guarded accessor'
+  )
+}
+
+runAsyncPageContracts().then(() => {
+  console.log('stock analyzer session contracts passed')
+}).catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})

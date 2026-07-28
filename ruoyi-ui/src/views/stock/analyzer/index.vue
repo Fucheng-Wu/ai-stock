@@ -310,8 +310,15 @@ export default {
     }
   },
   methods: {
+    getSessionStorage() {
+      try {
+        return window.sessionStorage
+      } catch (error) {
+        return null
+      }
+    },
     restoreLastAnalysis() {
-      const session = loadAnalysisSession(window.sessionStorage)
+      const session = loadAnalysisSession(this.getSessionStorage())
       if (!session) return
       this.stockCode = session.stockCode
       this.result = session.result
@@ -319,6 +326,7 @@ export default {
       this.buildMarketData()
     },
     handleAnalyze() {
+      if (this.loading) return
       const code = this.stockCode.trim()
       if (!code) {
         this.$message.warning('请输入股票代码')
@@ -333,7 +341,7 @@ export default {
         this.buildMarketData()
         const savedAt = Date.now()
         this.resultSavedAt = savedAt
-        saveAnalysisSession(window.sessionStorage, code, this.result, savedAt)
+        saveAnalysisSession(this.getSessionStorage(), code, this.result, savedAt)
       }).catch(err => {
         this.errorMsg = err.msg || '分析失败，请检查股票代码是否正确后重试'
       }).finally(() => {
