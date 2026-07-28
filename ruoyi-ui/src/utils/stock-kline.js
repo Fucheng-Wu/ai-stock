@@ -72,6 +72,10 @@ function buildStockKlineOption(klineData) {
 
   return {
     animation: false,
+    legend: {
+      data: ['MA5', 'MA10', 'MA20'],
+      top: 'top'
+    },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
@@ -85,8 +89,8 @@ function buildStockKlineOption(klineData) {
       { left: '10%', right: '8%', top: '72%', height: '14%' }
     ],
     xAxis: [
-      { type: 'category', data: dates, boundaryGap: false, axisLine: { onZero: false } },
-      { type: 'category', gridIndex: 1, data: dates, boundaryGap: false, axisLabel: { show: false }, axisLine: { onZero: false } }
+      { type: 'category', data: dates, boundaryGap: true, axisLine: { onZero: false } },
+      { type: 'category', gridIndex: 1, data: dates, boundaryGap: true, axisLabel: { show: false }, axisLine: { onZero: false } }
     ],
     yAxis: [
       { scale: true },
