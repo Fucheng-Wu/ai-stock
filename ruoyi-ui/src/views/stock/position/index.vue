@@ -56,6 +56,23 @@
           <template slot-scope="scope">
             <div v-loading="loading[scope.row.positionId]" class="stock-expand-panel position-analysis">
               <template v-if="report(scope.row)">
+                <stock-kline-chart
+                  v-if="hasKlineData(report(scope.row))"
+                  :kline-data="report(scope.row).klineData"
+                />
+                <section v-else class="stock-detail-panel stock-empty position-kline-empty">
+                  <i class="el-icon-data-line stock-empty__icon" />
+                  <div class="stock-empty__title">重新分析以生成 K 线图</div>
+                  <p class="stock-empty__description">这是一份不含 K 线数据的历史分析，原报告仍会保留。</p>
+                  <el-button
+                    v-hasPermi="['stock:position:analyze']"
+                    type="primary"
+                    plain
+                    icon="el-icon-refresh"
+                    :loading="loading[scope.row.positionId]"
+                    @click="analyze(scope.row, false)"
+                  >重新分析</el-button>
+                </section>
                 <div class="stock-expand-panel__header">
                   <div class="stock-identity">
                     <span class="stock-identity__avatar">{{ stockInitial(reportStock(scope.row)) }}</span>
@@ -355,10 +372,12 @@ import {
   analyzePosition,
   getPositionAnalysis
 } from '@/api/stock/position'
+import StockKlineChart from '@/views/stock/analyzer/components/StockKlineChart.vue'
 import { nextRequestVersion, isLatestRequest } from '@/utils/request-version'
 
 export default {
   name: 'StockPosition',
+  components: { StockKlineChart },
   data() {
     return {
       rows: [],
@@ -404,6 +423,9 @@ export default {
     this.load()
   },
   methods: {
+    hasKlineData(result) {
+      return Boolean(result && Array.isArray(result.klineData) && result.klineData.length)
+    },
     report(row) {
       return row ? this.reports[row.positionId] : null
     },
@@ -692,6 +714,11 @@ export default {
 </style>
 
 <style lang="scss" scoped>
+.position-analysis .stock-kline-chart,
+.position-kline-empty {
+  margin-bottom: 16px;
+}
+
 .position-header-actions {
   flex-wrap: nowrap;
 }
