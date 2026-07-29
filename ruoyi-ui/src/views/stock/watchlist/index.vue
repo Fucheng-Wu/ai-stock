@@ -56,6 +56,7 @@
           <template slot-scope="scope">
             <div v-loading="analysisLoading[scope.row.stockCode]" class="stock-expand-panel watchlist-analysis">
               <template v-if="analysis(scope.row)">
+                <stock-kline-chart :kline-data="analysis(scope.row).klineData || []" />
                 <div class="stock-expand-panel__header">
                   <div class="stock-identity">
                     <span class="stock-identity__avatar">{{ stockInitial(analysis(scope.row).stock) }}</span>
@@ -224,11 +225,13 @@
 
 <script>
 import { analyzeStock } from '@/api/stock/analyzer'
+import StockKlineChart from '@/views/stock/analyzer/components/StockKlineChart.vue'
 import { addWatchlist, listWatchlist, removeWatchlist } from '@/api/stock/watchlist'
 import { nextRequestVersion, isLatestRequest } from '@/utils/request-version'
 
 export default {
   name: 'StockWatchlist',
+  components: { StockKlineChart },
   data() {
     return {
       loading: false,
@@ -472,6 +475,10 @@ export default {
   ::v-deep .el-table__expanded-cell {
     padding: 0;
   }
+}
+
+.watchlist-analysis .stock-kline-chart {
+  margin-bottom: 16px;
 }
 
 .analysis-name {
