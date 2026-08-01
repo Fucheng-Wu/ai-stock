@@ -1,115 +1,220 @@
-<p align="center">
-	<img alt="logo" src="https://oscimg.oschina.net/oscnet/up-d3d0a9303e11d522a06cd263f3079027715.png">
-</p>
-<h1 align="center" style="margin: 30px 0 30px; font-weight: bold;">RuoYi v3.9.2</h1>
-<h4 align="center">基于SpringBoot+Vue前后端分离的Java快速开发框架</h4>
-<p align="center">
-	<a href="https://gitee.com/y_project/RuoYi-Vue/stargazers"><img src="https://gitee.com/y_project/RuoYi-Vue/badge/star.svg?theme=dark"></a>
-	<a href="https://gitee.com/y_project/RuoYi-Vue"><img src="https://img.shields.io/badge/RuoYi-v3.9.2-brightgreen.svg"></a>
-	<a href="https://gitee.com/y_project/RuoYi-Vue/blob/master/LICENSE"><img src="https://img.shields.io/github/license/mashape/apistatus.svg"></a>
-</p>
+# 520 均线战法 AI 股票分析系统
 
-## 平台简介
+基于 RuoYi-Vue 3.9.2 构建的 Web 股票分析系统，结合实时行情、K 线、MA5/MA20 均线、交易信号与 DeepSeek 综合解读，为股票分析、自选管理和持仓管理提供统一的可视化报告。
 
-若依是一套全部开源的快速开发平台，毫无保留给个人及企业免费使用。
+> 本项目仅用于技术研究与学习，不构成任何投资建议。证券市场存在风险，请独立判断并自行承担交易风险。
 
-* 前端采用Vue、Element UI。
-* 后端采用Spring Boot、Spring Security、Redis & Jwt。
-* 权限认证使用Jwt，支持多终端认证系统。
-* 支持加载动态权限菜单，多方式轻松权限控制。
-* 高效率开发，使用代码生成器可以一键生成前后端代码。
-* 阿里云折扣场：[点我进入](http://aly.ruoyi.vip)，腾讯云秒杀场：[点我进入](http://txy.ruoyi.vip)&nbsp;&nbsp;
+## 功能特性
 
-# 版本分支
+- **AI 股票分析**：输入股票代码后生成行情、K 线、均线趋势、交易信号和策略报告。
+- **520 均线策略**：根据 MA5、MA20 及价格关系判断趋势、买点和退出条件。
+- **趋势过滤**：第一步趋势不向上时，不展示第二步“找买点”。
+- **我的自选**：添加时只需输入股票代码，系统自动识别并保存股票名称。
+- **我的持仓**：维护成本价、数量和账户总资产，展示盈亏、止损止盈及仓位管理。
+- **统一报告布局**：三个页面共用行情概览与策略报告组件；持仓页额外展示止损止盈和仓位管理。
+- **按需 AI 分析**：点击“AI 分析”可主动刷新 DeepSeek 解读；自动刷新时只有完整 K 线发生变化才重新生成 AI 内容。
+- **分析缓存**：自选分析按股票代码缓存 5 分钟，缓存有效时直接展开；点击刷新或缓存过期后重新获取。
+- **持仓快照**：持仓分析结果保存到数据库，再次展开时可直接读取最近一次分析。
 
-RuoYi-Vue 后端项目提供 Spring Boot 2.x / 3.x / 4.x 多版本分支的并行维护。
+## 页面说明
 
-| 名称              | 说明                      | 地址                                                    |
-| :---------------- | :------------------------ | :------------------------------------------------------ |
-| master 默认分支   | Spring Boot 4.x (JDK 17+) | https://gitee.com/y_project/RuoYi-Vue                   |
-| springboot3 分支  | Spring Boot 3.x (JDK 17+) | https://gitee.com/y_project/RuoYi-Vue/tree/springboot3  |
-| springboot2 分支  | Spring Boot 2.x (JDK 8+)  | https://gitee.com/y_project/RuoYi-Vue/tree/springboot2  |  
+| 页面 | 主要能力 | 缓存行为 |
+| --- | --- | --- |
+| AI 分析报告 | 单只股票技术分析与 DeepSeek 解读 | 当前浏览器会话保存最后一次结果 |
+| 我的自选 | 关注股票、自动识别名称、展开分析 | 按股票缓存 5 分钟 |
+| 我的持仓 | 成本、数量、盈亏、止损止盈、仓位管理 | 数据库保存最近分析快照 |
 
-RuoYi-Vue 前端项目提供 Vue 2.x / 3.x / JavaScript TypeScript 版本均可混用搭配
+## 技术栈
 
-| 项目名称      | **RuoYi-Vue** | **RuoYi-Vue3** | **RuoYi-Vue3-TypeScript**   |
-| :---          | :---          | :---           | :---                        |
-| **前端框架**  | Vue 2        | Vue 3          | Vue 3                       |
-| **脚本语言**  | JavaScript   | JavaScript     | TypeScript                  |
-| **构建工具**  | Vue CLI      | Vite           | Vite                        |
-| **UI 组件库** | Element UI   | Element Plus   | Element Plus                |
-| **状态管理**  | Vuex         | Pinia          | Pinia                       |
-| **路由管理**  | Vue Router 3 | Vue Router 4   | Vue Router 4                |
-| **核心特点**  | 1. 技术栈经典稳定<br>2. 社区资料丰富<br>3. 当前维护重心已转移 | 1. 现代前端技术栈<br>2. 开发体验与性能更优<br>3. 官方主推的活跃版本 | 1. 类型加持，减少沟通成本<br>2. 开发时有提示，效率更高<br>3. 多人协作企业级开发项目 |
-| **仓库地址**  | [RuoYi-Vue](https://gitee.com/y_project/RuoYi-Vue) | [RuoYi-Vue3](https://gitcode.com/yangzongzhuan/RuoYi-Vue3) | [RuoYi-Vue3-TypeScript](https://gitcode.com/yangzongzhuan/RuoYi-Vue3/tree/typescript) |
+### 后端
 
-## 内置功能
+- Java 17
+- Spring Boot 4.0.6
+- Spring Security + JWT
+- MyBatis
+- MySQL
+- Redis
+- Maven
 
-1.  用户管理：用户是系统操作者，该功能主要完成系统用户配置。
-2.  部门管理：配置系统组织机构（公司、部门、小组），树结构展现支持数据权限。
-3.  岗位管理：配置系统用户所属担任职务。
-4.  菜单管理：配置系统菜单，操作权限，按钮权限标识等。
-5.  角色管理：角色菜单权限分配、设置角色按机构进行数据范围权限划分。
-6.  字典管理：对系统中经常使用的一些较为固定的数据进行维护。
-7.  参数管理：对系统动态配置常用参数。
-8.  通知公告：系统通知公告信息发布维护。
-9.  操作日志：系统正常操作日志记录和查询；系统异常信息日志记录和查询。
-10. 登录日志：系统登录日志记录查询包含登录异常。
-11. 在线用户：当前系统中活跃用户状态监控。
-12. 定时任务：在线（添加、修改、删除)任务调度包含执行结果日志。
-13. 代码生成：前后端代码的生成（java、html、xml、sql）支持CRUD下载 。
-14. 系统接口：根据业务代码自动生成相关的api接口文档。
-15. 服务监控：监视当前系统CPU、内存、磁盘、堆栈等相关信息。
-16. 缓存监控：对系统的缓存信息查询，命令统计等。
-17. 在线构建器：拖动表单元素生成相应的HTML代码。
-18. 连接池监视：监视当前系统数据库连接池状态，可进行分析SQL找出系统性能瓶颈。
+### 前端
 
-## 在线体验
+- Vue 2.6
+- Element UI 2.15
+- ECharts 5
+- Vue CLI 4
+- Axios
 
-- admin/admin123  
-- 陆陆续续收到一些打赏，为了更好的体验已用于演示服务器升级。谢谢各位小伙伴。
+### 外部服务
 
-演示地址：http://vue.ruoyi.vip  
-文档地址：http://doc.ruoyi.vip
+- 腾讯行情接口：实时股票行情
+- 新浪行情接口：历史 K 线数据
+- DeepSeek API：AI 综合解读（可选）
 
-## 演示图
+## 分析流程
 
-<table>
-    <tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/cd1f90be5f2684f4560c9519c0f2a232ee8.jpg"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/1cbcf0e6f257c7d3a063c0e3f2ff989e4b3.jpg"/></td>
-    </tr>
-    <tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-8074972883b5ba0622e13246738ebba237a.png"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-9f88719cdfca9af2e58b352a20e23d43b12.png"/></td>
-    </tr>
-    <tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-39bf2584ec3a529b0d5a3b70d15c9b37646.png"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-936ec82d1f4872e1bc980927654b6007307.png"/></td>
-    </tr>
-	<tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-b2d62ceb95d2dd9b3fbe157bb70d26001e9.png"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-d67451d308b7a79ad6819723396f7c3d77a.png"/></td>
-    </tr>	 
-    <tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/5e8c387724954459291aafd5eb52b456f53.jpg"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/644e78da53c2e92a95dfda4f76e6d117c4b.jpg"/></td>
-    </tr>
-	<tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-8370a0d02977eebf6dbf854c8450293c937.png"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-49003ed83f60f633e7153609a53a2b644f7.png"/></td>
-    </tr>
-	<tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-d4fe726319ece268d4746602c39cffc0621.png"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-c195234bbcd30be6927f037a6755e6ab69c.png"/></td>
-    </tr>
-    <tr>
-        <td><img src="https://oscimg.oschina.net/oscnet/b6115bc8c31de52951982e509930b20684a.jpg"/></td>
-        <td><img src="https://oscimg.oschina.net/oscnet/up-5e4daac0bb59612c5038448acbcef235e3a.png"/></td>
-    </tr>
-</table>
+```text
+股票代码
+  ├─ 获取腾讯实时行情
+  ├─ 获取新浪 K 线
+  ├─ 计算 MA5 / MA20
+  ├─ 判断均线趋势与交易信号
+  ├─ 生成 520 策略规则报告
+  └─ K 线变化时调用 DeepSeek 生成综合解读
+```
 
+主要信号包括金叉、弱金叉、死叉、回踩和均线粘合发散。
 
-## 若依前后端分离交流群
+## 项目结构
 
-QQ群： [![加入QQ群](https://img.shields.io/badge/已满-937441-blue.svg)](https://jq.qq.com/?_wv=1027&k=5bVB1og) [![加入QQ群](https://img.shields.io/badge/已满-887144332-blue.svg)](https://jq.qq.com/?_wv=1027&k=5eiA4DH) [![加入QQ群](https://img.shields.io/badge/已满-180251782-blue.svg)](https://jq.qq.com/?_wv=1027&k=5AxMKlC) [![加入QQ群](https://img.shields.io/badge/已满-104180207-blue.svg)](https://jq.qq.com/?_wv=1027&k=51G72yr) [![加入QQ群](https://img.shields.io/badge/已满-186866453-blue.svg)](https://jq.qq.com/?_wv=1027&k=VvjN2nvu) [![加入QQ群](https://img.shields.io/badge/已满-201396349-blue.svg)](https://jq.qq.com/?_wv=1027&k=5vYAqA05) [![加入QQ群](https://img.shields.io/badge/已满-101456076-blue.svg)](https://jq.qq.com/?_wv=1027&k=kOIINEb5) [![加入QQ群](https://img.shields.io/badge/已满-101539465-blue.svg)](https://jq.qq.com/?_wv=1027&k=UKtX5jhs) [![加入QQ群](https://img.shields.io/badge/已满-264312783-blue.svg)](https://jq.qq.com/?_wv=1027&k=EI9an8lJ) [![加入QQ群](https://img.shields.io/badge/已满-167385320-blue.svg)](https://jq.qq.com/?_wv=1027&k=SWCtLnMz) [![加入QQ群](https://img.shields.io/badge/已满-104748341-blue.svg)](https://jq.qq.com/?_wv=1027&k=96Dkdq0k) [![加入QQ群](https://img.shields.io/badge/已满-160110482-blue.svg)](https://jq.qq.com/?_wv=1027&k=0fsNiYZt) [![加入QQ群](https://img.shields.io/badge/已满-170801498-blue.svg)](https://jq.qq.com/?_wv=1027&k=7xw4xUG1) [![加入QQ群](https://img.shields.io/badge/已满-108482800-blue.svg)](https://jq.qq.com/?_wv=1027&k=eCx8eyoJ) [![加入QQ群](https://img.shields.io/badge/已满-101046199-blue.svg)](https://jq.qq.com/?_wv=1027&k=SpyH2875) [![加入QQ群](https://img.shields.io/badge/已满-136919097-blue.svg)](https://jq.qq.com/?_wv=1027&k=tKEt51dz) [![加入QQ群](https://img.shields.io/badge/已满-143961921-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=0vBbSb0ztbBgVtn3kJS-Q4HUNYwip89G&authKey=8irq5PhutrZmWIvsUsklBxhj57l%2F1nOZqjzigkXZVoZE451GG4JHPOqW7AW6cf0T&noverify=0&group_code=143961921) [![加入QQ群](https://img.shields.io/badge/已满-174951577-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=ZFAPAbp09S2ltvwrJzp7wGlbopsc0rwi&authKey=HB2cxpxP2yspk%2Bo3WKTBfktRCccVkU26cgi5B16u0KcAYrVu7sBaE7XSEqmMdFQp&noverify=0&group_code=174951577) [![加入QQ群](https://img.shields.io/badge/已满-161281055-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=Fn2aF5IHpwsy8j6VlalNJK6qbwFLFHat&authKey=uyIT%2B97x2AXj3odyXpsSpVaPMC%2Bidw0LxG5MAtEqlrcBcWJUA%2FeS43rsF1Tg7IRJ&noverify=0&group_code=161281055) [![加入QQ群](https://img.shields.io/badge/已满-138988063-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=XIzkm_mV2xTsUtFxo63bmicYoDBA6Ifm&authKey=dDW%2F4qsmw3x9govoZY9w%2FoWAoC4wbHqGal%2BbqLzoS6VBarU8EBptIgPKN%2FviyC8j&noverify=0&group_code=138988063) [![加入QQ群](https://img.shields.io/badge/已满-151450850-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=DkugnCg68PevlycJSKSwjhFqfIgrWWwR&authKey=pR1Pa5lPIeGF%2FFtIk6d%2FGB5qFi0EdvyErtpQXULzo03zbhopBHLWcuqdpwY241R%2F&noverify=0&group_code=151450850) [![加入QQ群](https://img.shields.io/badge/已满-224622315-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=F58bgRa-Dp-rsQJThiJqIYv8t4-lWfXh&authKey=UmUs4CVG5OPA1whvsa4uSespOvyd8%2FAr9olEGaWAfdLmfKQk%2FVBp2YU3u2xXXt76&noverify=0&group_code=224622315) [![加入QQ群](https://img.shields.io/badge/已满-287842588-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=Nxb2EQ5qozWa218Wbs7zgBnjLSNk_tVT&authKey=obBKXj6SBKgrFTJZx0AqQnIYbNOvBB2kmgwWvGhzxR67RoRr84%2Bus5OadzMcdJl5&noverify=0&group_code=287842588) [![加入QQ群](https://img.shields.io/badge/已满-187944233-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=numtK1M_I4eVd2Gvg8qtbuL8JgX42qNh&authKey=giV9XWMaFZTY%2FqPlmWbkB9g3fi0Ev5CwEtT9Tgei0oUlFFCQLDp4ozWRiVIzubIm&noverify=0&group_code=187944233) [![加入QQ群](https://img.shields.io/badge/已满-228578329-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=G6r5KGCaa3pqdbUSXNIgYloyb8e0_L0D&authKey=4w8tF1eGW7%2FedWn%2FHAypQksdrML%2BDHolQSx7094Agm7Luakj9EbfPnSTxSi2T1LQ&noverify=0&group_code=228578329) [![加入QQ群](https://img.shields.io/badge/已满-191164766-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=GsOo-OLz53J8y_9TPoO6XXSGNRTgbFxA&authKey=R7Uy%2Feq%2BZsoKNqHvRKhiXpypW7DAogoWapOawUGHokJSBIBIre2%2FoiAZeZBSLuBc&noverify=0&group_code=191164766) [![加入QQ群](https://img.shields.io/badge/已满-174569686-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=PmYavuzsOthVqfdAPbo4uAeIbu7Ttjgc&authKey=p52l8%2FXa4PS1JcEmS3VccKSwOPJUZ1ZfQ69MEKzbrooNUljRtlKjvsXf04bxNp3G&noverify=0&group_code=174569686) [![加入QQ群](https://img.shields.io/badge/127358632-blue.svg)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=M9y5NjAl44lAL_Vh2crmEehZU_PMU6KS&authKey=ZSDz8hEREWSaPuxQV3gEwqGIaGjfRNnkB4rJjf0IvXhrSUGSGwQFmBA%2Boe8HFxyl&noverify=0&group_code=127358632) 点击按钮入群。
+```text
+ai-stock/
+├─ ruoyi-admin/       # Web 入口、股票 Controller、应用配置
+├─ ruoyi-framework/   # 若依框架与安全配置
+├─ ruoyi-system/      # 股票分析、策略规则、持仓和自选业务
+├─ ruoyi-common/      # 通用模块
+├─ ruoyi-ui/          # Vue 前端
+└─ sql/               # 基础数据库与股票功能 SQL
+```
+
+股票相关核心文件：
+
+```text
+ruoyi-admin/src/main/java/com/ruoyi/web/controller/stock/
+ruoyi-system/src/main/java/com/ruoyi/system/domain/stock/
+ruoyi-system/src/main/java/com/ruoyi/system/service/impl/StockAnalyzerServiceImpl.java
+ruoyi-system/src/main/java/com/ruoyi/system/service/impl/StockStrategyReportBuilder.java
+ruoyi-ui/src/views/stock/
+ruoyi-ui/src/components/StockAnalysisOverview/
+ruoyi-ui/src/components/StockStrategyReport/
+```
+
+## 环境要求
+
+- JDK 17+
+- Maven 3.9+
+- Node.js 16+ 与 npm
+- MySQL 8+
+- Redis 6+
+
+## 初始化数据库
+
+1. 创建数据库，例如 `ry-vue`。
+2. 执行若依基础表结构：
+
+   ```text
+   sql/ry_20260417.sql
+   sql/quartz.sql
+   ```
+
+3. 执行股票功能表和菜单：
+
+   ```text
+   sql/stock_menu.sql
+   ```
+
+`stock_menu.sql` 会创建自选、持仓、账户和持仓分析快照表，并初始化股票管理菜单与权限。
+
+## 配置
+
+### 数据库与 Redis
+
+修改以下文件中的本地连接信息：
+
+- `ruoyi-admin/src/main/resources/application-druid.yml`
+- `ruoyi-admin/src/main/resources/application.yml`
+
+### DeepSeek
+
+在 `ruoyi-admin/src/main/resources/application.yml` 中配置：
+
+```yaml
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:}
+  base-url: https://api.deepseek.com/v1/chat/completions
+```
+
+建议通过环境变量提供密钥：
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的 DeepSeek API Key"
+```
+
+未配置 API Key 时，系统仍会生成技术指标和规则报告，但不会生成 DeepSeek 综合解读。不要把真实 API Key 提交到 Git。
+
+## 启动项目
+
+### 1. 启动后端
+
+```powershell
+mvn clean package -DskipTests
+java -jar ruoyi-admin/target/ruoyi-admin.jar
+```
+
+后端默认地址：`http://localhost:8080`
+
+### 2. 启动前端
+
+```powershell
+cd ruoyi-ui
+npm install
+npm run dev
+```
+
+前端默认地址：`http://localhost`
+
+若使用若依初始化数据，可通过默认账号登录：`admin / admin123`。部署到公开环境前请立即修改默认密码。
+
+## API 概览
+
+| 方法 | 地址 | 说明 |
+| --- | --- | --- |
+| POST | `/stock/analyzer/analyze` | 分析指定股票 |
+| GET | `/stock/watchlist/list` | 查询我的自选 |
+| POST | `/stock/watchlist` | 添加自选并自动识别名称 |
+| DELETE | `/stock/watchlist/{watchlistId}` | 移除自选 |
+| GET | `/stock/position/list` | 查询持仓 |
+| POST | `/stock/position` | 新增持仓 |
+| PUT | `/stock/position` | 更新持仓 |
+| DELETE | `/stock/position/{id}` | 删除持仓 |
+| GET | `/stock/position/{id}/analysis` | 读取持仓分析快照 |
+| POST | `/stock/position/{id}/analyze` | 重新分析持仓 |
+
+请求需要登录，并受对应的 `stock:*` 权限控制。
+
+## 测试与构建
+
+后端策略测试：
+
+```powershell
+mvn -pl ruoyi-system -Dtest=StockStrategyReportBuilderTest test
+```
+
+前端股票模块测试：
+
+```powershell
+cd ruoyi-ui
+npm run test:stock-expand
+npm run test:stock-kline
+npm run test:stock-list-kline
+npm run test:stock-session
+npm run test:stock-strategy
+npm run test:stock-auto-ai
+npm run test:stock-watchlist-cache
+```
+
+前端生产构建：
+
+```powershell
+npm run build:prod
+```
+
+## 数据与缓存说明
+
+- 实时行情和 K 线来自第三方公开接口，可用性、延迟和数据准确性取决于数据提供方。
+- 自选分析缓存保存在当前浏览器会话中，有效期为 5 分钟。
+- 持仓分析快照保存在数据库中，删除持仓时会同步删除相关快照。
+- 自动刷新会先获取最新 K 线；完整 K 线未变化时复用已有 AI 解读，避免重复调用 DeepSeek。
+
+## 开源说明
+
+本项目基于 [RuoYi-Vue](https://gitee.com/y_project/RuoYi-Vue) 开发，遵循仓库中的 [MIT License](LICENSE)。
