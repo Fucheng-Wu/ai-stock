@@ -14,6 +14,7 @@ public class StockAnalysisResult
     private String aiReason;
     private String riskLevel;
     private List<StockKlineData> klineData;
+    private StrategyReport strategyReport;
 
     public StockRealtimeData getStock() { return stock; }
     public void setStock(StockRealtimeData stock) { this.stock = stock; }
@@ -35,4 +36,6 @@ public class StockAnalysisResult
     public void setIndicators(java.util.Map<String, Object> indicators) { this.indicators = indicators; }
     public List<StockKlineData> getKlineData() { return klineData; }
     public void setKlineData(List<StockKlineData> klineData) { this.klineData = klineData; }
+    public StrategyReport getStrategyReport() { return strategyReport; }
+    public void setStrategyReport(StrategyReport strategyReport) { this.strategyReport = strategyReport; }
 }

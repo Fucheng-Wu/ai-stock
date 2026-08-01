@@ -20,9 +20,6 @@
             @keyup.enter.native="handleAdd"
           />
         </el-form-item>
-        <el-form-item label="股票名称">
-          <el-input v-model="form.stockName" clearable placeholder="选填，便于识别" @keyup.enter.native="handleAdd" />
-        </el-form-item>
         <el-form-item class="watchlist-form__action">
           <el-button
             v-hasPermi="['stock:watchlist:add']"
@@ -41,7 +38,7 @@
           <h2 class="stock-card__title">自选列表</h2>
           <p class="stock-card__description">点击“分析”查看实时行情、均线和交易信号</p>
         </div>
-        <el-button type="text" icon="el-icon-refresh" :loading="loading" @click="getList">刷新列表</el-button>
+        <el-button type="text" icon="el-icon-refresh" :loading="loading" @click="handleRefresh">刷新列表</el-button>
       </div>
 
       <el-table
@@ -56,118 +53,13 @@
           <template slot-scope="scope">
             <div v-loading="analysisLoading[scope.row.stockCode]" class="stock-expand-panel watchlist-analysis">
               <template v-if="analysis(scope.row)">
-                <stock-kline-chart :kline-data="analysis(scope.row).klineData || []" />
-                <div class="stock-expand-panel__header">
-                  <div class="stock-identity">
-                    <span class="stock-identity__avatar">{{ stockInitial(analysis(scope.row).stock) }}</span>
-                    <div>
-                      <span class="stock-identity__name analysis-name">{{ display(analysis(scope.row).stock.name) }}</span>
-                      <span class="stock-identity__code">{{ display(analysis(scope.row).stock.code) }}</span>
-                    </div>
-                  </div>
-                  <div class="analysis-price">
-                    <strong class="stock-number" :class="changeClass(analysis(scope.row).stock)">
-                      {{ formatNumber(analysis(scope.row).stock.currentPrice) }}
-                    </strong>
-                    <span class="stock-number" :class="changeClass(analysis(scope.row).stock)">
-                      {{ signed(analysis(scope.row).stock.changePct) }}%
-                    </span>
-                  </div>
-                </div>
+                <stock-analysis-overview :result="analysis(scope.row)" />
 
-                <div class="stock-metric-grid compact-metrics">
-                  <div v-for="item in marketItems(analysis(scope.row).stock)" :key="item.label" class="stock-metric">
-                    <div class="stock-metric__label">{{ item.label }}</div>
-                    <div class="stock-metric__value stock-number">{{ item.value }}</div>
-                    <div class="stock-metric__hint">{{ item.hint }}</div>
-                  </div>
-                </div>
-
-                <div class="stock-detail-grid analysis-grid">
-                  <section class="stock-detail-panel">
-                    <div class="stock-section-title">
-                      <strong>均线趋势</strong>
-                      <span class="stock-badge" :class="trendBadgeClass(analysis(scope.row).trend20ma)">
-                        {{ display(analysis(scope.row).trendDesc) }}
-                      </span>
-                    </div>
-                    <div class="stock-field-grid ma-fields">
-                      <div class="stock-field">
-                        <span class="stock-field__label">MA5</span>
-                        <strong class="stock-field__value stock-number">{{ formatNumber(analysis(scope.row).stock.ma5) }}</strong>
-                      </div>
-                      <div class="stock-field">
-                        <span class="stock-field__label">MA20</span>
-                        <strong class="stock-field__value stock-number">{{ formatNumber(analysis(scope.row).stock.ma20) }}</strong>
-                      </div>
-                      <div class="stock-field">
-                        <span class="stock-field__label">趋势状态</span>
-                        <strong class="stock-field__value">{{ trendLabel(analysis(scope.row).trend20ma) }}</strong>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section class="stock-detail-panel">
-                    <div class="stock-section-title">
-                      <strong>交易信号</strong>
-                      <span class="stock-badge" :class="signalBadgeClass(analysis(scope.row).signal)">
-                        {{ signalLabel(analysis(scope.row).signal) }}
-                      </span>
-                    </div>
-                    <div class="signal-description">{{ display(analysis(scope.row).signal.description) }}</div>
-                    <div class="stock-inline-meta signal-meta">
-                      <span>置信度 <strong>{{ confidenceLabel(analysis(scope.row).signal.confidence) }}</strong></span>
-                      <span>建议仓位 <strong class="primary-text">{{ display(analysis(scope.row).signal.suggestedPosition) }}</strong></span>
-                    </div>
-                    <div class="stock-callout">{{ display(analysis(scope.row).signal.reason) }}</div>
-                  </section>
-                </div>
-
-                <section class="stock-detail-panel discipline-panel">
-                  <div class="stock-section-title">
-                    <strong>操作纪律</strong>
-                    <i class="el-icon-lock discipline-icon" />
-                  </div>
-                  <ol class="stock-rule-list">
-                    <li v-for="(rule, index) in tradingRules" :key="rule" class="stock-rule">
-                      <span class="stock-rule__index">{{ String(index + 1).padStart(2, '0') }}</span>
-                      <span>{{ rule }}</span>
-                    </li>
-                  </ol>
-                </section>
-
-                <section class="ai-action-panel">
-                  <div>
-                    <strong>需要更完整的分析？</strong>
-                    <span>调用 DeepSeek 结合当前技术指标生成操作建议</span>
-                  </div>
-                  <el-button
-                    type="primary"
-                    plain
-                    icon="el-icon-cpu"
-                    :loading="aiLoading[scope.row.stockCode]"
-                    @click="handleAiAnalyze(scope.row)"
-                  >AI 分析</el-button>
-                </section>
-
-                <section v-if="aiShown[scope.row.stockCode]" class="stock-detail-panel ai-result-panel">
-                  <div class="stock-section-title">
-                    <strong>DeepSeek AI 分析报告</strong>
-                    <el-tag :type="riskTagType(analysis(scope.row).riskLevel)" size="small" effect="plain">
-                      风险等级 · {{ display(analysis(scope.row).riskLevel) }}
-                    </el-tag>
-                  </div>
-                  <div class="stock-report">
-                    <div class="stock-report__advice">
-                      <span class="stock-report__icon"><i class="el-icon-cpu" /></span>
-                      <div>
-                        <div class="stock-report__label">AI 操作建议</div>
-                        <div class="stock-report__value">{{ display(analysis(scope.row).aiAdvice) }}</div>
-                      </div>
-                    </div>
-                    <div class="stock-report__reason">{{ display(analysis(scope.row).aiReason) }}</div>
-                  </div>
-                </section>
+                <stock-strategy-report
+                  :result="analysis(scope.row)"
+                  :ai-loading="aiLoading[scope.row.stockCode]"
+                  @ai-analyze="handleAiAnalyze(scope.row)"
+                />
               </template>
             </div>
           </template>
@@ -225,48 +117,68 @@
 
 <script>
 import { analyzeStock } from '@/api/stock/analyzer'
-import StockKlineChart from '@/views/stock/analyzer/components/StockKlineChart.vue'
+import StockAnalysisOverview from '@/components/StockAnalysisOverview'
+import StockStrategyReport from '@/components/StockStrategyReport'
 import { addWatchlist, listWatchlist, removeWatchlist } from '@/api/stock/watchlist'
 import { nextRequestVersion, isLatestRequest } from '@/utils/request-version'
+import { hasAiAnalysis, hasSameKline, reuseAiAnalysis } from '@/utils/stock-ai-cache'
+import {
+  WATCHLIST_ANALYSIS_CACHE_TTL,
+  saveWatchlistAnalysisCache,
+  loadWatchlistAnalysisCache,
+  removeWatchlistAnalysisCache
+} from '@/utils/stock-watchlist-cache'
 
 export default {
   name: 'StockWatchlist',
-  components: { StockKlineChart },
+  components: { StockAnalysisOverview, StockStrategyReport },
   data() {
     return {
       loading: false,
       adding: false,
       rows: [],
-      form: { stockCode: '', stockName: '' },
+      form: { stockCode: '' },
       expandedCodes: [],
       analysisByCode: {},
+      analysisSavedAtByCode: {},
       analysisRequestVersions: {},
       analysisLoading: {},
-      aiLoading: {},
-      aiShown: {},
-      tradingRules: [
-        '20 日线向下时坚决不进场',
-        '金叉进场首次使用三成仓位',
-        '跌破 5 日线及时止损',
-        '跌破 20 日线无条件清仓',
-        '盈利 3%–5% 时分批落袋',
-        '始终保留五成以上现金'
-      ]
+      aiLoading: {}
     }
   },
   created() {
     this.getList()
   },
   methods: {
+    getSessionStorage() {
+      try {
+        return window.sessionStorage
+      } catch (error) {
+        return null
+      }
+    },
     analysis(row) {
       return row && row.stockCode ? this.analysisByCode[row.stockCode] : null
     },
     getList() {
       this.loading = true
-      listWatchlist().then(res => {
+      return listWatchlist().then(res => {
         this.rows = res.data || []
       }).finally(() => {
         this.loading = false
+      })
+    },
+    handleRefresh() {
+      const code = this.expandedCodes[0]
+      if (!code) {
+        this.getList()
+        return
+      }
+      removeWatchlistAnalysisCache(this.getSessionStorage(), code)
+      this.$delete(this.analysisSavedAtByCode, code)
+      this.getList().then(() => {
+        const row = this.rows.find(item => item.stockCode === code)
+        if (row) this.loadAnalysis(row)
       })
     },
     handleAdd() {
@@ -276,9 +188,9 @@ export default {
         return
       }
       this.adding = true
-      addWatchlist({ stockCode, stockName: this.form.stockName.trim() }).then(() => {
+      addWatchlist({ stockCode }).then(() => {
         this.$modal.msgSuccess('已加入自选')
-        this.form = { stockCode: '', stockName: '' }
+        this.form = { stockCode: '' }
         this.getList()
       }).finally(() => {
         this.adding = false
@@ -292,23 +204,42 @@ export default {
         return
       }
       this.expandedCodes = [code]
-      if (this.analysisByCode[code] || this.analysisLoading[code]) return
-      this.loadAnalysis(row)
+      this.ensureAnalysis(row)
     },
     handleAnalyze(row) {
       this.expandedCodes = [row.stockCode]
-      this.$set(this.aiShown, row.stockCode, false)
+      this.ensureAnalysis(row)
+    },
+    ensureAnalysis(row) {
+      const code = row.stockCode
+      if (this.analysisLoading[code]) return
+      const savedAt = this.analysisSavedAtByCode[code]
+      if (this.analysisByCode[code] && savedAt && Date.now() - savedAt < WATCHLIST_ANALYSIS_CACHE_TTL) return
+
+      const cached = loadWatchlistAnalysisCache(this.getSessionStorage(), code)
+      if (cached) {
+        this.$set(this.analysisByCode, code, cached.result)
+        this.$set(this.analysisSavedAtByCode, code, cached.savedAt)
+        return
+      }
       this.loadAnalysis(row)
     },
     loadAnalysis(row) {
       const code = row.stockCode
       const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
-      this.$set(this.aiShown, code, false)
+      const previous = this.analysisByCode[code]
       this.$set(this.aiLoading, code, false)
       this.$set(this.analysisLoading, code, true)
       analyzeStock({ stockCode: code, includeAi: false }).then(res => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return null
+        const technicalResult = res.data
+        if (hasAiAnalysis(previous) && hasSameKline(previous, technicalResult)) {
+          return reuseAiAnalysis(technicalResult, previous)
+        }
+        return analyzeStock({ stockCode: code, includeAi: true }).then(aiRes => aiRes.data)
+      }).then(result => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
-        this.$set(this.analysisByCode, code, res.data)
+        if (result) this.saveAnalysis(code, result)
       }).finally(() => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.analysisLoading, code, false)
@@ -316,23 +247,31 @@ export default {
     },
     handleAiAnalyze(row) {
       const code = row.stockCode
+      if (this.analysisLoading[code] || this.aiLoading[code]) return
       const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
-      this.$set(this.analysisLoading, code, false)
       this.$set(this.aiLoading, code, true)
       analyzeStock({ stockCode: code, includeAi: true }).then(res => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
-        this.$set(this.analysisByCode, code, res.data)
-        this.$set(this.aiShown, code, true)
+        this.saveAnalysis(code, res.data)
       }).finally(() => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.aiLoading, code, false)
       })
+    },
+    saveAnalysis(code, result) {
+      const savedAt = Date.now()
+      this.$set(this.analysisByCode, code, result)
+      this.$set(this.analysisSavedAtByCode, code, savedAt)
+      saveWatchlistAnalysisCache(this.getSessionStorage(), code, result, savedAt)
     },
     handleRemove(row) {
       this.$modal.confirm(`确认从自选中移除 ${row.stockName || row.stockCode} 吗？`).then(() => {
         return removeWatchlist(row.watchlistId)
       }).then(() => {
         this.$modal.msgSuccess('移除成功')
+        removeWatchlistAnalysisCache(this.getSessionStorage(), row.stockCode)
+        this.$delete(this.analysisByCode, row.stockCode)
+        this.$delete(this.analysisSavedAtByCode, row.stockCode)
         this.getList()
       }).catch(() => {})
     },
@@ -340,41 +279,13 @@ export default {
       const text = (row && (row.name || row.stockName || row.code || row.stockCode)) || '股'
       return text.slice(0, 1).toUpperCase()
     },
-    marketItems(stock) {
-      const value = stock || {}
-      return [
-        { label: '开盘价', value: this.formatNumber(value.openPrice), hint: '人民币 / 元' },
-        { label: '昨收价', value: this.formatNumber(value.prevClose), hint: '人民币 / 元' },
-        { label: '最高价', value: this.formatNumber(value.high), hint: '今日最高' },
-        { label: '最低价', value: this.formatNumber(value.low), hint: '今日最低' },
-        { label: '成交量', value: this.formatCompact(value.volume), hint: '成交手数' },
-        { label: '成交额', value: this.formatCompact(value.amount), hint: '人民币' }
-      ]
-    },
     formatNumber(value) {
       if (value === null || value === undefined || value === '') return '--'
       const number = Number(value)
       return Number.isFinite(number) ? number.toFixed(2) : '--'
     },
-    formatCompact(value) {
-      if (value === null || value === undefined || value === '') return '--'
-      const number = Number(value)
-      if (!Number.isFinite(number)) return '--'
-      if (number >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
-      if (number >= 10000) return `${(number / 10000).toFixed(2)} 万`
-      return number.toLocaleString()
-    },
-    signed(value) {
-      if (value === null || value === undefined || value === '') return '--'
-      const number = Number(value)
-      if (!Number.isFinite(number)) return '--'
-      return `${number > 0 ? '+' : ''}${number.toFixed(2)}`
-    },
     display(value) {
       return value === null || value === undefined || value === '' ? '--' : value
-    },
-    changeClass(stock) {
-      return Number(stock && stock.changePct) >= 0 ? 'stock-up' : 'stock-down'
     },
     trendLabel(trend) {
       return { UP: '多头趋势', DOWN: '空头趋势', FLAT: '震荡整理' }[trend] || '趋势未知'
@@ -477,33 +388,6 @@ export default {
   }
 }
 
-.watchlist-analysis .stock-kline-chart {
-  margin-bottom: 16px;
-}
-
-.analysis-name {
-  font-size: 16px;
-}
-
-.analysis-price {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-
-  strong {
-    font-size: 26px;
-  }
-
-  span {
-    font-size: 14px;
-    font-weight: 600;
-  }
-}
-
-.compact-metrics {
-  margin-bottom: 16px;
-}
-
 .analysis-grid {
   margin-bottom: 16px;
 }
@@ -525,45 +409,6 @@ export default {
 
 .primary-text {
   color: var(--stock-primary);
-}
-
-.discipline-panel {
-  margin-bottom: 16px;
-}
-
-.discipline-icon {
-  color: var(--stock-primary);
-}
-
-.ai-action-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px;
-  border: 1px dashed #bfdbfe;
-  border-radius: 8px;
-  background: var(--stock-primary-soft);
-
-  strong,
-  span {
-    display: block;
-  }
-
-  strong {
-    color: var(--stock-text);
-    font-size: 14px;
-  }
-
-  span {
-    margin-top: 5px;
-    color: var(--stock-muted);
-    font-size: 12px;
-  }
-}
-
-.ai-result-panel {
-  margin-top: 16px;
 }
 
 .table-secondary {
@@ -594,9 +439,5 @@ export default {
     }
   }
 
-  .ai-action-panel {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }
 </style>

@@ -96,6 +96,18 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+.stock-kline-chart {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+
+  ::v-deep .el-card__body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+}
+
 .stock-kline-chart__header {
   gap: 16px;
 }
@@ -115,11 +127,14 @@ export default {
 }
 
 .stock-kline-chart__canvas {
-  height: 520px;
+  flex: 1;
+  width: 100%;
+  min-height: 520px;
 }
 
 .stock-kline-chart__empty {
   display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
   min-height: 240px;
@@ -142,7 +157,7 @@ export default {
   }
 
   .stock-kline-chart__canvas {
-    height: 420px;
+    min-height: 420px;
   }
 }
 </style>

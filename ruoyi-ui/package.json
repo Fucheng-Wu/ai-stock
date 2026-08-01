@@ -11,6 +11,9 @@
     "test:stock-kline": "node tests/stock-kline-chart.test.js",
     "test:stock-list-kline": "node tests/watchlist-position-kline.test.js",
     "test:stock-session": "node tests/stock-analyzer-session.test.js",
+    "test:stock-strategy": "node tests/stock-strategy-report.test.js",
+    "test:stock-auto-ai": "node tests/stock-auto-ai-analysis.test.js",
+    "test:stock-watchlist-cache": "node tests/stock-watchlist-cache.test.js",
     "build:prod": "vue-cli-service build",
     "build:stage": "vue-cli-service build --mode staging",
     "preview": "node build/index.js --preview"

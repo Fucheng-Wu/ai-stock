@@ -45,7 +45,7 @@ const position = read('src/views/stock/position/index.vue')
 assertSharedExpandContract(watchlist, 'watchlist')
 assertSharedExpandContract(position, 'position')
 assert(watchlist.includes('@click="handleAnalyze(scope.row)"'), 'watchlist must retain its analysis action')
-assert(position.includes('@click="analyze(scope.row, false)"'), 'position must retain its analysis action')
+assert(position.includes('@click="analyze(scope.row)"'), 'position must retain its analysis action')
 assert(watchlist.includes('handleExpandChange(row, expandedRows)'), 'watchlist must handle native expansion')
 assert(position.includes('handleExpandChange(row, expandedRows)'), 'position must handle native expansion')
 

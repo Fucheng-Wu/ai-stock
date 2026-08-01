@@ -1,6 +1,6 @@
 const UP_COLOR = '#E5484D'
 const DOWN_COLOR = '#16A36A'
-const MA_COLORS = ['#5470C6', '#F59E0B', '#8B5CF6']
+const MA_COLORS = ['#000000', '#F5C400', '#E5484D']
 
 function toFiniteNumber(value) {
   if (value === null || value === undefined || value === '' || typeof value === 'boolean') {
@@ -107,9 +107,9 @@ function buildStockKlineOption(klineData) {
         data: bars.map(bar => [bar.open, bar.close, bar.low, bar.high]),
         itemStyle: { color: UP_COLOR, color0: DOWN_COLOR, borderColor: UP_COLOR, borderColor0: DOWN_COLOR }
       },
-      { name: 'MA5', type: 'line', data: bars.map(bar => bar.ma5), showSymbol: false, lineStyle: { color: MA_COLORS[0] } },
-      { name: 'MA10', type: 'line', data: bars.map(bar => bar.ma10), showSymbol: false, lineStyle: { color: MA_COLORS[1] } },
-      { name: 'MA20', type: 'line', data: bars.map(bar => bar.ma20), showSymbol: false, lineStyle: { color: MA_COLORS[2] } },
+      { name: 'MA5', type: 'line', data: bars.map(bar => bar.ma5), showSymbol: false, itemStyle: { color: MA_COLORS[0] }, lineStyle: { color: MA_COLORS[0] }, emphasis: { itemStyle: { color: MA_COLORS[0] }, lineStyle: { color: MA_COLORS[0] } } },
+      { name: 'MA10', type: 'line', data: bars.map(bar => bar.ma10), showSymbol: false, itemStyle: { color: MA_COLORS[1] }, lineStyle: { color: MA_COLORS[1] }, emphasis: { itemStyle: { color: MA_COLORS[1] }, lineStyle: { color: MA_COLORS[1] } } },
+      { name: 'MA20', type: 'line', data: bars.map(bar => bar.ma20), showSymbol: false, itemStyle: { color: MA_COLORS[2] }, lineStyle: { color: MA_COLORS[2] }, emphasis: { itemStyle: { color: MA_COLORS[2] }, lineStyle: { color: MA_COLORS[2] } } },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumeData }
     ]
   }

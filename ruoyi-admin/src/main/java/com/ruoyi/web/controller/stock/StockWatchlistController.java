@@ -11,6 +11,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.system.domain.stock.StockWatchlist;
+import com.ruoyi.system.service.IStockAnalyzerService;
 import com.ruoyi.system.service.IStockWatchlistService;
 
 @RestController
@@ -18,8 +19,13 @@ import com.ruoyi.system.service.IStockWatchlistService;
 public class StockWatchlistController extends BaseController
 {
     private final IStockWatchlistService watchlistService;
+    private final IStockAnalyzerService stockAnalyzerService;
 
-    public StockWatchlistController(IStockWatchlistService watchlistService) { this.watchlistService = watchlistService; }
+    public StockWatchlistController(IStockWatchlistService watchlistService, IStockAnalyzerService stockAnalyzerService)
+    {
+        this.watchlistService = watchlistService;
+        this.stockAnalyzerService = stockAnalyzerService;
+    }
 
     @PreAuthorize("@ss.hasPermi('stock:watchlist:list')")
     @GetMapping("/list")
@@ -29,7 +35,8 @@ public class StockWatchlistController extends BaseController
     @PostMapping
     public AjaxResult add(@RequestBody StockWatchlist watchlist)
     {
-        watchlistService.add(getUserId(), watchlist.getStockCode(), watchlist.getStockName(), getUsername());
+        String stockName = stockAnalyzerService.resolveStockName(watchlist.getStockCode());
+        watchlistService.add(getUserId(), watchlist.getStockCode(), stockName, getUsername());
         return success();
     }
 

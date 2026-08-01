@@ -32,151 +32,16 @@
 
     <main v-loading="loading" element-loading-text="正在获取行情并计算均线，请稍候…" class="analyzer-content">
       <template v-if="result && result.stock && !loading">
-        <stock-kline-chart
-          :kline-data="result.klineData || []"
+        <stock-analysis-overview
+          :result="result"
           :updated-at="formattedResultSavedAt"
         />
 
-        <el-card class="stock-card quote-card" shadow="never">
-          <div class="stock-quote">
-            <div class="stock-quote__main">
-              <div class="stock-identity">
-                <span class="stock-identity__avatar">{{ stockInitial }}</span>
-                <div>
-                  <span class="stock-identity__name quote-name">{{ stock.name || '未命名股票' }}</span>
-                  <span class="stock-identity__code">{{ stock.code || stockCode }}</span>
-                </div>
-                <span class="stock-badge" :class="changeBadgeClass">
-                  <i :class="priceChange >= 0 ? 'el-icon-top' : 'el-icon-bottom'" />
-                  {{ priceChange >= 0 ? '上涨' : '下跌' }}
-                </span>
-              </div>
-              <div class="stock-quote__price stock-number" :class="priceClass">
-                {{ formatNumber(stock.currentPrice) }}
-                <small>元</small>
-              </div>
-              <div class="stock-quote__change stock-number" :class="priceClass">
-                {{ signed(stock.changeAmt) }} &nbsp; {{ signed(stock.changePct) }}%
-              </div>
-            </div>
-            <div class="stock-quote__time">
-              <i class="el-icon-time" />
-              行情时间 {{ stock.date || '--' }} {{ stock.time || '--' }}
-            </div>
-          </div>
-        </el-card>
-
-        <el-card class="stock-card" shadow="never">
-          <div slot="header" class="stock-card__header">
-            <div>
-              <h2 class="stock-card__title">实时行情</h2>
-              <p class="stock-card__description">关键价格与成交数据</p>
-            </div>
-            <span class="stock-badge">数据快照</span>
-          </div>
-          <div class="stock-metric-grid">
-            <div v-for="item in marketData" :key="item.label" class="stock-metric">
-              <div class="stock-metric__label">{{ item.label }}</div>
-              <div class="stock-metric__value stock-number" :class="item.color">{{ item.value }}</div>
-              <div class="stock-metric__hint">{{ item.unit }}</div>
-            </div>
-          </div>
-        </el-card>
-
-        <div class="stock-detail-grid analyzer-strategy-grid">
-          <el-card class="stock-card strategy-card" shadow="never">
-            <div slot="header" class="stock-card__header">
-              <div>
-                <h2 class="stock-card__title">均线趋势</h2>
-                <p class="stock-card__description">MA5 与 MA20 趋势结构</p>
-              </div>
-              <span class="stock-badge" :class="trendBadgeClass">{{ trendLabel }}</span>
-            </div>
-            <div class="moving-average-grid">
-              <div class="moving-average-item">
-                <span>MA5</span>
-                <strong class="stock-number">{{ formatNumber(stock.ma5) }}</strong>
-                <small>前一日 {{ formatNumber(stock.ma5Prev) }}</small>
-              </div>
-              <div class="moving-average-item">
-                <span>MA20</span>
-                <strong class="stock-number">{{ formatNumber(stock.ma20) }}</strong>
-                <small>前一日 {{ formatNumber(stock.ma20Prev) }}</small>
-              </div>
-            </div>
-            <div class="trend-summary">
-              <i :class="trendIcon" />
-              <div>
-                <strong>{{ result.trendDesc || '趋势数据暂不可用' }}</strong>
-                <span>20 日均线趋势判断</span>
-              </div>
-            </div>
-          </el-card>
-
-          <el-card class="stock-card strategy-card" shadow="never">
-            <div slot="header" class="stock-card__header">
-              <div>
-                <h2 class="stock-card__title">交易信号</h2>
-                <p class="stock-card__description">策略信号与系统仓位建议</p>
-              </div>
-              <span class="stock-badge" :class="signalBadgeClass">{{ signalBadgeText }}</span>
-            </div>
-            <div class="signal-headline">{{ signal.description || '当前未形成明确交易信号' }}</div>
-            <div class="stock-field-grid">
-              <div class="stock-field">
-                <span class="stock-field__label">信号类型</span>
-                <strong class="stock-field__value">{{ signal.type || '--' }}</strong>
-              </div>
-              <div class="stock-field">
-                <span class="stock-field__label">置信度</span>
-                <strong class="stock-field__value">{{ confidenceLabel }}</strong>
-              </div>
-              <div class="stock-field">
-                <span class="stock-field__label">建议仓位</span>
-                <strong class="stock-field__value primary-text">{{ signal.suggestedPosition || '--' }}</strong>
-              </div>
-            </div>
-            <div class="stock-callout">
-              <strong>系统判断：</strong>{{ signal.reason || '暂无进一步说明' }}
-            </div>
-          </el-card>
-        </div>
-
-        <el-card class="stock-card ai-report-card" shadow="never">
-          <div slot="header" class="stock-card__header">
-            <div>
-              <h2 class="stock-card__title">DeepSeek AI 分析报告</h2>
-              <p class="stock-card__description">基于技术指标生成的辅助分析，不构成投资建议</p>
-            </div>
-            <el-tag :type="riskTagType" size="small" effect="plain">风险等级 · {{ result.riskLevel || '未知' }}</el-tag>
-          </div>
-          <div class="stock-report">
-            <div class="stock-report__advice">
-              <span class="stock-report__icon"><i class="el-icon-cpu" /></span>
-              <div>
-                <div class="stock-report__label">AI 操作建议</div>
-                <div class="stock-report__value" :class="adviceClass">{{ result.aiAdvice || 'AI 分析暂不可用' }}</div>
-              </div>
-            </div>
-            <div class="stock-report__reason">{{ result.aiReason || '当前未返回 AI 分析理由，可先参考均线趋势与交易信号。' }}</div>
-          </div>
-        </el-card>
-
-        <el-card class="stock-card stock-card--flat" shadow="never">
-          <div slot="header" class="stock-card__header">
-            <div>
-              <h2 class="stock-card__title">操作纪律</h2>
-              <p class="stock-card__description">遵守策略边界，比预测行情更重要</p>
-            </div>
-            <i class="el-icon-lock discipline-icon" />
-          </div>
-          <ol class="stock-rule-list">
-            <li v-for="rule in tradingRules" :key="rule.id" class="stock-rule">
-              <span class="stock-rule__index">{{ String(rule.id).padStart(2, '0') }}</span>
-              <span>{{ rule.text }}</span>
-            </li>
-          </ol>
-        </el-card>
+        <stock-strategy-report
+          :result="result"
+          :ai-loading="aiLoading"
+          @ai-analyze="handleAiAnalyze"
+        />
       </template>
 
       <el-card v-else-if="!loading" class="stock-card empty-card" shadow="never">
@@ -195,30 +60,26 @@
 
 <script>
 import { analyzeStock } from '@/api/stock/analyzer'
-import StockKlineChart from './components/StockKlineChart.vue'
+import StockAnalysisOverview from '@/components/StockAnalysisOverview'
+import StockStrategyReport from '@/components/StockStrategyReport'
 import { saveAnalysisSession, loadAnalysisSession } from '@/utils/stock-analyzer-session'
+import { hasAiAnalysis, hasSameKline, reuseAiAnalysis } from '@/utils/stock-ai-cache'
 
 export default {
   name: 'StockAnalyzer',
   components: {
-    StockKlineChart
+    StockAnalysisOverview,
+    StockStrategyReport
   },
   data() {
     return {
       stockCode: '',
       loading: false,
+      aiLoading: false,
       errorMsg: '',
       result: null,
       resultSavedAt: null,
-      marketData: [],
-      tradingRules: [
-        { id: 1, text: '20 日线向下时坚决不进场，所有反弹都需要保持谨慎。' },
-        { id: 2, text: '金叉进场首次使用三成仓位，不因短线波动追高。' },
-        { id: 3, text: '跌破 5 日线及时止损，将单次亏损控制在 5% 以内。' },
-        { id: 4, text: '跌破 20 日线无条件清仓，趋势破坏后等待重新确认。' },
-        { id: 5, text: '盈利达到 3%–5% 时分批落袋，不让盈利转为亏损。' },
-        { id: 6, text: '始终保留五成以上现金，不满仓、不押注单一机会。' }
-      ]
+      marketData: []
     }
   },
   computed: {
@@ -231,20 +92,6 @@ export default {
     },
     signal() {
       return (this.result && this.result.signal) || {}
-    },
-    stockInitial() {
-      const text = this.stock.name || this.stock.code || '股'
-      return text.slice(0, 1).toUpperCase()
-    },
-    priceChange() {
-      const value = Number(this.stock.changePct)
-      return Number.isFinite(value) ? value : 0
-    },
-    priceClass() {
-      return this.priceChange >= 0 ? 'stock-up' : 'stock-down'
-    },
-    changeBadgeClass() {
-      return this.priceChange >= 0 ? 'stock-badge--up' : 'stock-badge--down'
     },
     trendLabel() {
       const labels = { UP: '多头趋势', DOWN: '空头趋势', FLAT: '震荡整理' }
@@ -286,19 +133,6 @@ export default {
     confidenceLabel() {
       const map = { HIGH: '高', MEDIUM: '中', LOW: '低' }
       return map[this.signal.confidence] || this.signal.confidence || '--'
-    },
-    riskTagType() {
-      if (!this.result) return 'info'
-      if (this.result.riskLevel === '低') return 'success'
-      if (this.result.riskLevel === '中') return 'warning'
-      if (this.result.riskLevel === '高') return 'danger'
-      return 'info'
-    },
-    adviceClass() {
-      const advice = (this.result && this.result.aiAdvice) || ''
-      if (advice.includes('买入') || advice.includes('加仓')) return 'stock-up'
-      if (advice.includes('卖出') || advice.includes('止损') || advice.includes('清仓')) return 'stock-down'
-      return ''
     }
   },
   created() {
@@ -326,7 +160,11 @@ export default {
       this.buildMarketData()
     },
     handleAnalyze() {
-      if (this.loading) return
+      if (this.loading || this.aiLoading) return
+      this.runAnalyze()
+    },
+    runAnalyze() {
+      if (this.loading || this.aiLoading) return
       const code = this.stockCode.trim()
       if (!code) {
         this.$message.warning('请输入股票代码')
@@ -334,19 +172,42 @@ export default {
       }
       this.loading = true
       this.errorMsg = ''
+      const previous = this.result
       this.result = null
       this.resultSavedAt = null
-      analyzeStock({ stockCode: code }).then(res => {
-        this.result = res.data
-        this.buildMarketData()
-        const savedAt = Date.now()
-        this.resultSavedAt = savedAt
-        saveAnalysisSession(this.getSessionStorage(), code, this.result, savedAt)
+      analyzeStock({ stockCode: code, includeAi: false }).then(res => {
+        const technicalResult = res.data
+        if (hasAiAnalysis(previous) && hasSameKline(previous, technicalResult)) {
+          return reuseAiAnalysis(technicalResult, previous)
+        }
+        return analyzeStock({ stockCode: code, includeAi: true }).then(aiRes => aiRes.data)
+      }).then(result => {
+        this.saveResult(code, result)
       }).catch(err => {
         this.errorMsg = err.msg || '分析失败，请检查股票代码是否正确后重试'
       }).finally(() => {
         this.loading = false
       })
+    },
+    handleAiAnalyze() {
+      if (this.loading || this.aiLoading || !this.result) return
+      const code = this.stockCode.trim()
+      if (!code) return
+      this.aiLoading = true
+      analyzeStock({ stockCode: code, includeAi: true }).then(res => {
+        this.saveResult(code, res.data)
+      }).catch(err => {
+        this.errorMsg = err.msg || 'AI 分析失败，请稍后重试'
+      }).finally(() => {
+        this.aiLoading = false
+      })
+    },
+    saveResult(code, result) {
+      this.result = result
+      this.buildMarketData()
+      const savedAt = Date.now()
+      this.resultSavedAt = savedAt
+      saveAnalysisSession(this.getSessionStorage(), code, this.result, savedAt)
     },
     buildMarketData() {
       if (!this.result || !this.result.stock) {
@@ -369,12 +230,6 @@ export default {
       if (value === null || value === undefined || value === '') return '--'
       const number = Number(value)
       return Number.isFinite(number) ? number.toFixed(digits) : '--'
-    },
-    signed(value) {
-      if (value === null || value === undefined || value === '') return '--'
-      const number = Number(value)
-      if (!Number.isFinite(number)) return '--'
-      return `${number > 0 ? '+' : ''}${number.toFixed(2)}`
     },
     formatVolume(value) {
       if (value === null || value === undefined || value === '') return '--'
@@ -420,20 +275,6 @@ export default {
 
 .analyzer-content {
   min-height: 280px;
-}
-
-.quote-card {
-  border-top: 3px solid var(--stock-primary);
-}
-
-.quote-name {
-  font-size: 17px;
-}
-
-.stock-quote__price small {
-  color: var(--stock-muted);
-  font-size: 13px;
-  font-weight: 400;
 }
 
 .moving-average-grid {
@@ -501,11 +342,6 @@ export default {
 
 .primary-text {
   color: var(--stock-primary);
-}
-
-.discipline-icon {
-  color: var(--stock-primary);
-  font-size: 20px;
 }
 
 .empty-card {

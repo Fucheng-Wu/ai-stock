@@ -24,6 +24,7 @@ import com.ruoyi.system.domain.stock.AnalysisSignal;
 import com.ruoyi.system.domain.stock.StockAnalysisResult;
 import com.ruoyi.system.domain.stock.StockKlineData;
 import com.ruoyi.system.domain.stock.StockRealtimeData;
+import com.ruoyi.system.domain.stock.StrategyReport;
 import com.ruoyi.system.service.IStockAnalyzerService;
 
 @Service
@@ -36,6 +37,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
     private static final String DEEPSEEK_MODEL = "deepseek-chat";
     private static final Charset GBK = Charset.forName("GBK");
     private static final int KLINE_DISPLAY_DAYS = 60;
+    private final StockStrategyReportBuilder strategyReportBuilder = new StockStrategyReportBuilder();
 
     @Autowired
     private RestTemplate restTemplate;
@@ -71,47 +73,23 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
 
         enrichWithMA(stock, klineData);
 
-        AnalysisSignal signal = detectSignals(stock, klineData);
+        List<StockKlineData> chartData = buildKlineChartData(klineData);
+        StrategyReport strategyReport = strategyReportBuilder.build(stock, chartData);
+        AnalysisSignal signal = strategyReportBuilder.compatibleSignal(strategyReport);
 
-        String trend = detectTrend20ma(stock);
+        String trend = strategyReport.getTrendStep().getConclusion();
         String trendDesc = getTrendDesc(trend);
-
-        String aiAdvice = "";
-        String aiReason = "";
-        String riskLevel = "中";
-        if (shouldCallAi(includeAi) && StringUtils.hasText(deepseekApiKey))
-        {
-            try
-            {
-                String[] aiResult = callDeepSeek(stock, signal, klineData);
-                aiAdvice = aiResult[0];
-                aiReason = aiResult[1];
-                riskLevel = aiResult[2];
-            }
-            catch (Exception e)
-            {
-                log.warn("DeepSeek AI 分析失败: {}", e.getMessage());
-                aiAdvice = "AI分析暂不可用";
-                aiReason = "调用失败: " + e.getMessage();
-                riskLevel = "未知";
-            }
-        }
-        else if (shouldCallAi(includeAi))
-        {
-            aiAdvice = "未配置 DeepSeek API Key";
-            aiReason = "请在 application.yml 中配置 deepseek.api-key";
-            riskLevel = "未知";
-        }
 
         StockAnalysisResult result = new StockAnalysisResult();
         result.setStock(stock);
         result.setSignal(signal);
         result.setTrend20ma(trend);
         result.setTrendDesc(trendDesc);
-        result.setAiAdvice(aiAdvice);
-        result.setAiReason(aiReason);
-        result.setRiskLevel(riskLevel);
-        result.setKlineData(buildKlineChartData(klineData));
+        result.setAiAdvice("");
+        result.setAiReason("");
+        result.setRiskLevel("中");
+        result.setKlineData(chartData);
+        result.setStrategyReport(strategyReport);
         Map<String, Object> indicators = new HashMap<>();
         JSONObject latest = klineData.get(klineData.size() - 1);
         JSONObject previous = klineData.get(klineData.size() - 2);
@@ -131,7 +109,44 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         for (int i = klineData.size() - 1; i >= 0; i--) { double ma5 = calculateMA(klineData, i, 5); double ma20 = calculateMA(klineData, i, 20); if (ma20 != 0 && Math.abs(ma5 - ma20) / ma20 <= 0.01) convergenceDays++; else break; }
         indicators.put("rangeHigh", rangeHigh); indicators.put("rangeLow", rangeLow); indicators.put("convergenceDays", convergenceDays); indicators.put("indexTrend", "上证指数趋势待接入"); indicators.put("sectorTrend", "暂未接入");
         result.setIndicators(indicators);
+        if (includeAi) applyAi(result);
         return result;
+    }
+
+    @Override
+    public StockAnalysisResult completeHoldingAnalysis(StockAnalysisResult result, Map<String, Object> holding, boolean includeAi)
+    {
+        if (result == null) throw new ServiceException("分析结果不能为空");
+        result.setHolding(holding);
+        strategyReportBuilder.enrichHolding(result.getStrategyReport(), result.getStock(), result.getKlineData(), holding);
+        result.setSignal(strategyReportBuilder.compatibleSignal(result.getStrategyReport()));
+        if (includeAi) applyAi(result);
+        return result;
+    }
+
+    private void applyAi(StockAnalysisResult result)
+    {
+        if (!StringUtils.hasText(deepseekApiKey))
+        {
+            result.setAiAdvice("未配置 DeepSeek API Key");
+            result.setAiReason("规则报告已生成；配置 deepseek.api-key 后可获取综合解读");
+            result.setRiskLevel("未知");
+            return;
+        }
+        try
+        {
+            String[] aiResult = callDeepSeek(result);
+            result.setAiAdvice(aiResult[0]);
+            result.setAiReason(aiResult[1]);
+            result.setRiskLevel(aiResult[2]);
+        }
+        catch (Exception e)
+        {
+            log.warn("DeepSeek AI 分析失败: {}", e.getMessage());
+            result.setAiAdvice("AI分析暂不可用");
+            result.setAiReason("调用失败；结构化规则报告不受影响: " + e.getMessage());
+            result.setRiskLevel("未知");
+        }
     }
 
     @Override
@@ -408,248 +423,19 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         }
     }
 
-    private AnalysisSignal detectSignals(StockRealtimeData stock, List<JSONObject> klineData)
+    private String[] callDeepSeek(StockAnalysisResult result)
     {
-        AnalysisSignal death = detectDeathCross(stock);
-        if (death != null) return death;
-
-        AnalysisSignal golden = detectGoldenCross(stock);
-        if (golden != null) return golden;
-
-        AnalysisSignal retrace = detectRetrace(stock, klineData);
-        if (retrace != null) return retrace;
-
-        AnalysisSignal convergence = detectConvergence(stock, klineData);
-        if (convergence != null) return convergence;
-
-        String trend = detectTrend20ma(stock);
-        if ("UP".equals(trend))
-        {
-            return new AnalysisSignal("NONE", "无明确信号（多头趋势中）", "MEDIUM",
-                    String.format("20日线向上(%.2f), 5日线%.2f, 暂无金叉/回踩/粘合信号，持有观望", stock.getMa20(), stock.getMa5()),
-                    "持有，不操作");
-        }
-        else if ("DOWN".equals(trend))
-        {
-            return new AnalysisSignal("NONE", "无信号（空头趋势，禁止操作）", "HIGH",
-                    String.format("20日线向下(%.2f), 所有反弹都是昙花一现，坚决不进场", stock.getMa20()),
-                    "空仓观望");
-        }
-        else
-        {
-            return new AnalysisSignal("NONE", "无信号（震荡市）", "MEDIUM",
-                    "20日线走平，震荡市信号无效，避免频繁操作",
-                    "空仓观望");
-        }
-    }
-
-    private AnalysisSignal detectGoldenCross(StockRealtimeData stock)
-    {
-        if (stock.getMa5() == null || stock.getMa20() == null
-                || stock.getMa5Prev() == null || stock.getMa20Prev() == null)
-            return null;
-
-        if (stock.getMa5Prev() < stock.getMa20Prev() && stock.getMa5() >= stock.getMa20())
-        {
-            String trend = detectTrend20ma(stock);
-            if ("UP".equals(trend))
-            {
-                return new AnalysisSignal("GOLDEN_CROSS", "金叉买点", "HIGH",
-                        String.format("5日均线上穿20日均线形成金叉，20日线向上(%.2f > %.2f)，中期多头趋势确认",
-                                stock.getMa20(), stock.getMa20Prev()),
-                        "3成仓（首次试探）");
-            }
-            else if ("FLAT".equals(trend))
-            {
-                return new AnalysisSignal("GOLDEN_CROSS_WEAK", "弱金叉（20日线走平）", "LOW",
-                        String.format("5日均线上穿20日均线，但20日线走平(%.2f ≈ %.2f)，震荡市信号可靠性低",
-                                stock.getMa20(), stock.getMa20Prev()),
-                        "观望，不操作");
-            }
-        }
-        return null;
-    }
-
-    private AnalysisSignal detectDeathCross(StockRealtimeData stock)
-    {
-        if (stock.getMa5() == null || stock.getMa20() == null
-                || stock.getMa5Prev() == null || stock.getMa20Prev() == null)
-            return null;
-
-        if (stock.getMa5Prev() >= stock.getMa20Prev() && stock.getMa5() < stock.getMa20())
-        {
-            return new AnalysisSignal("DEATH_CROSS", "死叉卖点", "HIGH",
-                    String.format("5日均线下穿20日均线形成死叉(%.2f < %.2f)，趋势转弱",
-                            stock.getMa5(), stock.getMa20()),
-                    "清仓");
-        }
-        return null;
-    }
-
-    private AnalysisSignal detectRetrace(StockRealtimeData stock, List<JSONObject> klineData)
-    {
-        if (stock.getMa5() == null || stock.getMa20() == null) return null;
-        if (klineData.size() < 10) return null;
-
-        List<Double> closes = new ArrayList<>();
-        for (JSONObject k : klineData) closes.add(k.getDouble("c"));
-        List<Double> ma5List = calcMA(closes, 5);
-        List<Double> ma20List = calcMA(closes, 20);
-
-        boolean hadGoldenCross = false;
-        for (int i = Math.max(0, ma5List.size() - 10); i < ma5List.size() - 1; i++)
-        {
-            if (ma5List.get(i) != null && ma20List.get(i) != null
-                    && i > 0 && ma5List.get(i - 1) != null && ma20List.get(i - 1) != null)
-            {
-                if (ma5List.get(i - 1) < ma20List.get(i - 1) && ma5List.get(i) >= ma20List.get(i))
-                {
-                    hadGoldenCross = true;
-                    break;
-                }
-            }
-        }
-
-        if (!hadGoldenCross) return null;
-
-        double currentClose = klineData.get(klineData.size() - 1).getDouble("c");
-        double distanceToMa20 = Math.abs(currentClose - stock.getMa20()) / stock.getMa20() * 100;
-
-        boolean volumeShrink = false;
-        if (klineData.size() >= 3)
-        {
-            long recentVolume = klineData.get(klineData.size() - 1).getLong("v");
-            long avgVolume = 0;
-            int count = 0;
-            for (int i = Math.max(0, klineData.size() - 5); i < klineData.size() - 1; i++)
-            {
-                avgVolume += klineData.get(i).getLong("v");
-                count++;
-            }
-            avgVolume = count > 0 ? avgVolume / count : 0;
-            volumeShrink = avgVolume > 0 && recentVolume < avgVolume * 0.7;
-        }
-
-        if (distanceToMa20 < 2.0 && currentClose >= stock.getMa20() * 0.98)
-        {
-            if (volumeShrink)
-            {
-                return new AnalysisSignal("RETRACE", "回踩买点（缩量洗盘）", "HIGH",
-                        String.format("金叉后股价回踩20日线附近(%.2f vs MA20=%.2f)，缩量，主力洗盘概率大",
-                                currentClose, stock.getMa20()),
-                        "2成仓（二次加仓，总仓不超5成）");
-            }
-            else
-            {
-                return new AnalysisSignal("RETRACE", "回踩买点", "MEDIUM",
-                        String.format("金叉后股价回踩20日线附近(%.2f vs MA20=%.2f)",
-                                currentClose, stock.getMa20()),
-                        "1-2成仓试探");
-            }
-        }
-        return null;
-    }
-
-    private AnalysisSignal detectConvergence(StockRealtimeData stock, List<JSONObject> klineData)
-    {
-        if (klineData.size() < 10) return null;
-
-        List<Double> closes = new ArrayList<>();
-        for (JSONObject k : klineData) closes.add(k.getDouble("c"));
-        List<Double> ma5List = calcMA(closes, 5);
-        List<Double> ma20List = calcMA(closes, 20);
-
-        int convergenceDays = 0;
-        for (int i = Math.max(0, ma5List.size() - 5); i < ma5List.size(); i++)
-        {
-            if (ma5List.get(i) != null && ma20List.get(i) != null)
-            {
-                double diffPct = Math.abs(ma5List.get(i) - ma20List.get(i)) / ma20List.get(i) * 100;
-                if (diffPct < 1.0) convergenceDays++;
-            }
-        }
-
-        if (convergenceDays >= 3 && klineData.size() >= 2)
-        {
-            long todayVol = klineData.get(klineData.size() - 1).getLong("v");
-            long avgVol = 0;
-            int count = 0;
-            for (int i = Math.max(0, klineData.size() - 6); i < klineData.size() - 1; i++)
-            {
-                avgVol += klineData.get(i).getLong("v");
-                count++;
-            }
-            avgVol = count > 0 ? avgVol / count : 0;
-
-            if (avgVol > 0 && todayVol > avgVol * 1.5
-                    && stock.getMa5() != null && stock.getMa20() != null
-                    && stock.getMa5() > stock.getMa20())
-            {
-                return new AnalysisSignal("CONVERGENCE", "均线粘合发散买点", "HIGH",
-                        String.format("5日/20日均线粘合%d天后放量突破，今日放量%.1f倍，主力吸筹完毕开始拉升",
-                                convergenceDays, (double) todayVol / avgVol),
-                        "4成仓，快进快出");
-            }
-        }
-        return null;
-    }
-
-    private String[] callDeepSeek(StockRealtimeData stock, AnalysisSignal signal, List<JSONObject> klineData)
-    {
-        String trend = detectTrend20ma(stock);
-        String trendDesc = getTrendDesc(trend);
-
-        StringBuilder klineSummary = new StringBuilder();
-        int start = Math.max(0, klineData.size() - 5);
-        for (int i = start; i < klineData.size(); i++)
-        {
-            JSONObject k = klineData.get(i);
-            klineSummary.append(String.format("  %s: 开%s 收%s 高%s 低%s 量%s\n",
-                    k.getString("d"), k.getString("o"), k.getString("c"),
-                    k.getString("h"), k.getString("l"), k.getString("v")));
-        }
-
         String prompt = String.format(
-                "你是一位资深A股技术分析专家，精通520均线战法。请基于以下数据给出专业的股票分析和操作建议。\n\n" +
-                "## 股票基本信息\n" +
-                "- 股票名称: %s (%s)\n" +
-                "- 当前价格: %.2f 元\n" +
-                "- 今日涨跌: %+.2f 元 (%+.2f%%)\n" +
-                "- 今日开盘: %.2f 元\n" +
-                "- 今日最高: %.2f 元\n" +
-                "- 今日最低: %.2f 元\n" +
-                "- 成交量: %d 手\n" +
-                "- 成交额: %.0f 元\n\n" +
-                "## 520均线数据\n" +
-                "- 5日均线(MA5): %s 元\n" +
-                "- 20日均线(MA20): %s 元\n" +
-                "- 20日均线趋势: %s (前值: %s)\n" +
-                "- 5日均线前值: %s\n\n" +
-                "## 最近5日K线\n%s" +
-                "## 系统检测到的信号\n" +
-                "- 信号类型: %s\n" +
-                "- 信号描述: %s\n" +
-                "- 置信度: %s\n" +
-                "- 系统理由: %s\n" +
-                "- 建议仓位: %s\n\n" +
-                "## 请你输出（请用中文，格式如下，不要多余内容）\n" +
+                "你是一位资深A股技术分析专家。规则事实已由后端确定，不得改写。\n\n" +
+                "## 股票\n%s\n\n" +
+                "## 持仓数据（非持仓分析时为空）\n%s\n\n" +
+                "## 520三步走结构化规则报告（含实际值、阈值、状态、原因、仓位；持仓分析时含成本、盈亏和止损止盈）\n%s\n\n" +
+                "## 请你只输出（中文，不要重新判定规则）\n" +
                 "**AI操作建议**: [买入/持有/观望/卖出/止损，一句话]\n\n" +
                 "**AI分析理由**: [详细分析，包括趋势判断、信号解读、量价关系、风险点等，200字以内]\n\n" +
                 "**风险等级**: [低/中/高]",
-                stock.getName(), stock.getCode(),
-                stock.getCurrentPrice(), stock.getChangeAmt(), stock.getChangePct(),
-                stock.getOpenPrice(), stock.getHigh(), stock.getLow(),
-                stock.getVolume(), stock.getAmount(),
-                stock.getMa5() != null ? String.format("%.2f", stock.getMa5()) : "暂无",
-                stock.getMa20() != null ? String.format("%.2f", stock.getMa20()) : "暂无",
-                trendDesc, stock.getMa20Prev() != null ? String.format("%.2f", stock.getMa20Prev()) : "暂无",
-                stock.getMa5Prev() != null ? String.format("%.2f", stock.getMa5Prev()) : "暂无",
-                klineSummary.toString(),
-                signal.getType(), signal.getDescription(), signal.getConfidence(),
-                signal.getReason(), signal.getSuggestedPosition()
+                JSON.toJSONString(result.getStock()), JSON.toJSONString(result.getHolding()), JSON.toJSONString(result.getStrategyReport())
         );
-
-        prompt += "\n三步走：第一步先判定20日线趋势是否可操作；第二步逐项判断金叉、回踩、均线粘合发散三类买点；第三步结合MA5/MA20、死叉、-5%止损、3%-5%止盈和仓位纪律给出结论。";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

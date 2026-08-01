@@ -133,19 +133,34 @@ function evaluateAnalyzer(options) {
 
   const executableScript = scriptMatch[1]
     .replace("import { analyzeStock } from '@/api/stock/analyzer'", 'const analyzeStock = injectedAnalyzeStock')
-    .replace("import StockKlineChart from './components/StockKlineChart.vue'", 'const StockKlineChart = injectedStockKlineChart')
+    .replace("import StockAnalysisOverview from '@/components/StockAnalysisOverview'", 'const StockAnalysisOverview = injectedStockAnalysisOverview')
+    .replace("import StockStrategyReport from '@/components/StockStrategyReport'", 'const StockStrategyReport = injectedStockStrategyReport')
     .replace(
       "import { saveAnalysisSession, loadAnalysisSession } from '@/utils/stock-analyzer-session'",
       'const { saveAnalysisSession, loadAnalysisSession } = injectedSessionHelpers'
+    )
+    .replace(
+      "import { hasAiAnalysis, hasSameKline, reuseAiAnalysis } from '@/utils/stock-ai-cache'",
+      'const { hasAiAnalysis, hasSameKline, reuseAiAnalysis } = injectedAiCache'
     )
     .replace('export default', 'module.exports =')
   const sandbox = {
     module: { exports: {} },
     injectedAnalyzeStock: options.analyzeStock,
-    injectedStockKlineChart: {},
+    injectedStockAnalysisOverview: {},
+    injectedStockStrategyReport: {},
     injectedSessionHelpers: {
       saveAnalysisSession: options.saveAnalysisSession,
       loadAnalysisSession: options.loadAnalysisSession
+    },
+    injectedAiCache: {
+      hasAiAnalysis: result => Boolean(result && result.aiAdvice),
+      hasSameKline: (previous, current) => JSON.stringify((previous && previous.klineData) || []) === JSON.stringify((current && current.klineData) || []),
+      reuseAiAnalysis: (current, previous) => Object.assign({}, current, {
+        aiAdvice: previous.aiAdvice,
+        aiReason: previous.aiReason,
+        riskLevel: previous.riskLevel
+      })
     },
     window: options.window
   }
@@ -226,16 +241,22 @@ assert.strictEqual(requestStartHarness.instance.resultSavedAt, null, 'request st
 
 const successfulResult = { stock: { code: 'sz000001' }, klineData: [] }
 const saveCalls = []
-let analyzeArgument
+const analyzeArguments = []
 let successMarketBuilds = 0
 const successHarness = createAnalyzerHarness({
   analyzeStock(argument) {
-    analyzeArgument = argument
-    return {
-      then(callback) { callback({ data: successfulResult }); return this },
-      catch() { return this },
-      finally(callback) { callback(); return this }
+    analyzeArguments.push(argument)
+    function resolved(value) {
+      return {
+        then(callback) {
+          const output = callback(value)
+          return output && typeof output.then === 'function' ? output : resolved(output)
+        },
+        catch() { return this },
+        finally(callback) { callback(); return this }
+      }
     }
+    return resolved({ data: successfulResult })
   },
   saveAnalysisSession(...args) {
     saveCalls.push(args)
@@ -245,7 +266,9 @@ const successHarness = createAnalyzerHarness({
 successHarness.instance.stockCode = ' sz000001 '
 successHarness.instance.buildMarketData = () => { successMarketBuilds += 1 }
 successHarness.instance.handleAnalyze()
-assert.strictEqual(analyzeArgument.stockCode, 'sz000001')
+assert.strictEqual(analyzeArguments.length, 2)
+assert.deepStrictEqual(analyzeArguments.map(item => item.includeAi), [false, true])
+assert.strictEqual(analyzeArguments[0].stockCode, 'sz000001')
 assert.strictEqual(successHarness.instance.result, successfulResult)
 assert.strictEqual(successMarketBuilds, 1, 'successful analysis must build the market cards')
 assert.strictEqual(typeof successHarness.instance.resultSavedAt, 'number')
@@ -316,7 +339,7 @@ async function runAsyncPageContracts() {
       overlapAnalyzeCalls += 1
       return overlapAnalyzeCalls === 1
         ? firstRequest.promise
-        : Promise.resolve({ data: { stock: { code: 'sz000001' }, klineData: [] } })
+        : Promise.resolve({ data: overlapResult })
     },
     saveAnalysisSession: () => true
   })
@@ -361,7 +384,8 @@ async function runAsyncPageContracts() {
   assert.strictEqual(blankWarnings, 1, 'blank stock code must retain its validation warning')
 
   assert(
-    /handleAnalyze\(\)\s*{\s*if \(this\.loading\) return\s*const code = this\.stockCode\.trim\(\)/s.test(analyzerSource),
+    /handleAnalyze\(\)\s*{\s*if \(this\.loading \|\| this\.aiLoading\) return\s*this\.runAnalyze\(\)/s.test(analyzerSource) &&
+      /runAnalyze\(\)\s*{\s*if \(this\.loading \|\| this\.aiLoading\) return\s*const code = this\.stockCode\.trim\(\)/s.test(analyzerSource),
     'handleAnalyze must reject loading-state reentry before validation or request mutation'
   )
 
