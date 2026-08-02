@@ -61,6 +61,17 @@
                   @ai-analyze="handleAiAnalyze(scope.row)"
                 />
               </template>
+              <div v-else class="stock-empty report-empty">
+                <i class="el-icon-data-analysis stock-empty__icon" />
+                <div class="stock-empty__title">暂无已保存的自选分析</div>
+                <p class="stock-empty__description">发起一次分析后，结果会保存到数据库，下次展开时可直接查看。</p>
+                <el-button
+                  v-hasPermi="['stock:analyzer:analyze']"
+                  type="primary"
+                  icon="el-icon-data-analysis"
+                  @click="handleAnalyze(scope.row)"
+                >立即分析</el-button>
+              </div>
             </div>
           </template>
         </el-table-column>
@@ -116,18 +127,17 @@
 </template>
 
 <script>
-import { analyzeStock } from '@/api/stock/analyzer'
 import StockAnalysisOverview from '@/components/StockAnalysisOverview'
 import StockStrategyReport from '@/components/StockStrategyReport'
-import { addWatchlist, listWatchlist, removeWatchlist } from '@/api/stock/watchlist'
+import {
+  addWatchlist,
+  listWatchlist,
+  removeWatchlist,
+  getWatchlistAnalysis,
+  analyzeWatchlist
+} from '@/api/stock/watchlist'
 import { nextRequestVersion, isLatestRequest } from '@/utils/request-version'
 import { hasAiAnalysis, hasSameKline, reuseAiAnalysis } from '@/utils/stock-ai-cache'
-import {
-  WATCHLIST_ANALYSIS_CACHE_TTL,
-  saveWatchlistAnalysisCache,
-  loadWatchlistAnalysisCache,
-  removeWatchlistAnalysisCache
-} from '@/utils/stock-watchlist-cache'
 
 export default {
   name: 'StockWatchlist',
@@ -140,7 +150,7 @@ export default {
       form: { stockCode: '' },
       expandedCodes: [],
       analysisByCode: {},
-      analysisSavedAtByCode: {},
+      loadedById: {},
       analysisRequestVersions: {},
       analysisLoading: {},
       aiLoading: {}
@@ -150,13 +160,6 @@ export default {
     this.getList()
   },
   methods: {
-    getSessionStorage() {
-      try {
-        return window.sessionStorage
-      } catch (error) {
-        return null
-      }
-    },
     analysis(row) {
       return row && row.stockCode ? this.analysisByCode[row.stockCode] : null
     },
@@ -170,15 +173,12 @@ export default {
     },
     handleRefresh() {
       const code = this.expandedCodes[0]
-      if (!code) {
-        this.getList()
-        return
-      }
-      removeWatchlistAnalysisCache(this.getSessionStorage(), code)
-      this.$delete(this.analysisSavedAtByCode, code)
-      this.getList().then(() => {
+      return this.getList().then(() => {
+        if (!code) return
         const row = this.rows.find(item => item.stockCode === code)
-        if (row) this.loadAnalysis(row)
+        if (!row) return
+        this.$delete(this.loadedById, row.watchlistId)
+        this.loadSavedAnalysis(row)
       })
     },
     handleAdd() {
@@ -204,42 +204,48 @@ export default {
         return
       }
       this.expandedCodes = [code]
-      this.ensureAnalysis(row)
+      if (this.loadedById[row.watchlistId] || this.analysisLoading[code]) return
+      this.loadSavedAnalysis(row)
     },
     handleAnalyze(row) {
       this.expandedCodes = [row.stockCode]
-      this.ensureAnalysis(row)
+      this.runAnalysis(row)
     },
-    ensureAnalysis(row) {
+    loadSavedAnalysis(row) {
       const code = row.stockCode
-      if (this.analysisLoading[code]) return
-      const savedAt = this.analysisSavedAtByCode[code]
-      if (this.analysisByCode[code] && savedAt && Date.now() - savedAt < WATCHLIST_ANALYSIS_CACHE_TTL) return
-
-      const cached = loadWatchlistAnalysisCache(this.getSessionStorage(), code)
-      if (cached) {
-        this.$set(this.analysisByCode, code, cached.result)
-        this.$set(this.analysisSavedAtByCode, code, cached.savedAt)
-        return
-      }
-      this.loadAnalysis(row)
+      const id = row.watchlistId
+      const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
+      this.$set(this.analysisLoading, code, true)
+      getWatchlistAnalysis(id).then(res => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
+        if (res.data) this.$set(this.analysisByCode, code, res.data)
+        this.$set(this.loadedById, id, true)
+      }).finally(() => {
+        if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
+        this.$set(this.analysisLoading, code, false)
+      })
     },
-    loadAnalysis(row) {
+    runAnalysis(row) {
       const code = row.stockCode
+      const id = row.watchlistId
+      if (this.analysisLoading[code] || this.aiLoading[code]) return
       const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
       const previous = this.analysisByCode[code]
       this.$set(this.aiLoading, code, false)
       this.$set(this.analysisLoading, code, true)
-      analyzeStock({ stockCode: code, includeAi: false }).then(res => {
+      analyzeWatchlist(id, false).then(res => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return null
         const technicalResult = res.data
         if (hasAiAnalysis(previous) && hasSameKline(previous, technicalResult)) {
           return reuseAiAnalysis(technicalResult, previous)
         }
-        return analyzeStock({ stockCode: code, includeAi: true }).then(aiRes => aiRes.data)
+        return analyzeWatchlist(id, true).then(aiRes => aiRes.data)
       }).then(result => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
-        if (result) this.saveAnalysis(code, result)
+        if (result) {
+          this.$set(this.analysisByCode, code, result)
+          this.$set(this.loadedById, id, true)
+        }
       }).finally(() => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.analysisLoading, code, false)
@@ -247,31 +253,27 @@ export default {
     },
     handleAiAnalyze(row) {
       const code = row.stockCode
+      const id = row.watchlistId
       if (this.analysisLoading[code] || this.aiLoading[code]) return
       const requestVersion = nextRequestVersion(this.analysisRequestVersions, code)
       this.$set(this.aiLoading, code, true)
-      analyzeStock({ stockCode: code, includeAi: true }).then(res => {
+      analyzeWatchlist(id, true).then(res => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
-        this.saveAnalysis(code, res.data)
+        this.$set(this.analysisByCode, code, res.data)
+        this.$set(this.loadedById, id, true)
       }).finally(() => {
         if (!isLatestRequest(this.analysisRequestVersions, code, requestVersion)) return
         this.$set(this.aiLoading, code, false)
       })
-    },
-    saveAnalysis(code, result) {
-      const savedAt = Date.now()
-      this.$set(this.analysisByCode, code, result)
-      this.$set(this.analysisSavedAtByCode, code, savedAt)
-      saveWatchlistAnalysisCache(this.getSessionStorage(), code, result, savedAt)
     },
     handleRemove(row) {
       this.$modal.confirm(`确认从自选中移除 ${row.stockName || row.stockCode} 吗？`).then(() => {
         return removeWatchlist(row.watchlistId)
       }).then(() => {
         this.$modal.msgSuccess('移除成功')
-        removeWatchlistAnalysisCache(this.getSessionStorage(), row.stockCode)
         this.$delete(this.analysisByCode, row.stockCode)
-        this.$delete(this.analysisSavedAtByCode, row.stockCode)
+        this.$delete(this.loadedById, row.watchlistId)
+        this.$delete(this.analysisRequestVersions, row.stockCode)
         this.getList()
       }).catch(() => {})
     },

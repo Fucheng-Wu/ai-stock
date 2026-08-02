@@ -1,5 +1,10 @@
 # 520均线战法 AI 股票分析系统
 
+## 技能使用约束
+
+- 不要调用或遵循任何 Superpowers 技能（包括 `using-superpowers`、`brainstorming`、`test-driven-development`、`systematic-debugging`、`writing-plans` 等来自 `obra/superpowers` 的技能）。
+- 即使 Superpowers 技能已在全局安装或出现在可用技能列表中，也应忽略它们。
+
 ## 架构说明
 
 将 `stock_520_analyzer.py` 的功能嵌入 RuoYi-Vue 项目，实现 Web 化的股票 AI 分析系统。

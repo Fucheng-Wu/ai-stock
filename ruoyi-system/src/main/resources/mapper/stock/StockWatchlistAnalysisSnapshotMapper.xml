@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.stock.StockWatchlistAnalysisSnapshotMapper">
+    <resultMap id="Snapshot" type="StockWatchlistAnalysisSnapshot">
+        <id property="snapshotId" column="snapshot_id" />
+        <result property="userId" column="user_id" />
+        <result property="watchlistId" column="watchlist_id" />
+        <result property="analysisJson" column="analysis_json" />
+        <result property="analyzedAt" column="analyzed_at" />
+    </resultMap>
+    <select id="select" resultMap="Snapshot">
+        select snapshot_id, user_id, watchlist_id, analysis_json, analyzed_at
+        from stock_watchlist_analysis_snapshot
+        where user_id = #{userId} and watchlist_id = #{watchlistId}
+    </select>
+    <insert id="upsert">
+        insert into stock_watchlist_analysis_snapshot
+            (user_id, watchlist_id, analysis_json, analyzed_at, create_time, update_time)
+        select #{userId}, #{watchlistId}, #{analysisJson}, #{analyzedAt}, sysdate(), sysdate()
+        from stock_watchlist
+        where user_id = #{userId} and watchlist_id = #{watchlistId}
+        lock in share mode
+        on duplicate key update
+            analysis_json = #{analysisJson}, analyzed_at = #{analyzedAt}, update_time = sysdate()
+    </insert>
+    <delete id="delete">
+        delete from stock_watchlist_analysis_snapshot
+        where user_id = #{userId} and watchlist_id = #{watchlistId}
+    </delete>
+</mapper>

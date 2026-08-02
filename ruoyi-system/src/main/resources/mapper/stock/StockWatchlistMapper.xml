@@ -13,6 +13,11 @@
         select watchlist_id, user_id, stock_code, stock_name, create_by, create_time
         from stock_watchlist where user_id = #{userId} order by create_time desc
     </select>
+    <select id="selectByIdAndUserId" resultMap="StockWatchlistResult">
+        select watchlist_id, user_id, stock_code, stock_name, create_by, create_time
+        from stock_watchlist
+        where watchlist_id = #{watchlistId} and user_id = #{userId}
+    </select>
     <select id="existsByUserIdAndCode" resultType="boolean">
         select count(1) > 0 from stock_watchlist where user_id = #{userId} and stock_code = #{stockCode}
     </select>

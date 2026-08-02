@@ -24,6 +24,18 @@ create table stock_watchlist (
   unique key uk_stock_watchlist_user_code (user_id, stock_code)
 ) engine=InnoDB default charset=utf8mb4 comment='用户自选股票';
 
+create table stock_watchlist_analysis_snapshot (
+  snapshot_id bigint not null auto_increment,
+  user_id bigint not null,
+  watchlist_id bigint not null,
+  analysis_json longtext not null,
+  analyzed_at datetime not null,
+  create_time datetime,
+  update_time datetime,
+  primary key (snapshot_id),
+  unique key uk_watchlist_analysis_snapshot_user_watchlist (user_id, watchlist_id)
+) engine=InnoDB default charset=utf8mb4 comment='自选股票分析快照';
+
 insert into sys_menu values('2003', '我的自选', '2000', '2', 'watchlist', 'stock/watchlist/index', '', '', 1, 0, 'C', '0', '0', 'stock:watchlist:list', 'star', 'admin', sysdate(), '', null, '我的自选股票');
 insert into sys_menu values('2004', '加入自选', '2003', '1', '#', '', '', '', 1, 0, 'F', '0', '0', 'stock:watchlist:add', '#', 'admin', sysdate(), '', null, '');
 insert into sys_menu values('2005', '删除自选', '2003', '2', '#', '', '', '', 1, 0, 'F', '0', '0', 'stock:watchlist:remove', '#', 'admin', sysdate(), '', null, '');
