@@ -7,6 +7,7 @@ import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.system.domain.stock.StockWatchlist;
 import com.ruoyi.system.mapper.stock.StockWatchlistMapper;
 import com.ruoyi.system.service.IStockWatchlistService;
+import com.ruoyi.system.service.support.StockCodeUtils;
 
 @Service
 public class StockWatchlistServiceImpl implements IStockWatchlistService
@@ -20,10 +21,7 @@ public class StockWatchlistServiceImpl implements IStockWatchlistService
 
     public String normalizeStockCode(String input)
     {
-        String code = StringUtils.trim(input).toLowerCase();
-        if (code.startsWith("sh") || code.startsWith("sz")) code = code.substring(2);
-        if (!code.matches("[036]\\d{5}")) throw new ServiceException("股票代码格式不正确，仅支持沪深 A 股");
-        return code;
+        return StockCodeUtils.normalizePlainCode(input);
     }
 
     @Override

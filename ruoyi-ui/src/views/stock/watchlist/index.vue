@@ -16,7 +16,7 @@
             v-model="form.stockCode"
             clearable
             prefix-icon="el-icon-search"
-            placeholder="例如 600519 或 sh600519"
+            placeholder="例如 600519、510300 或 sz159915"
             @keyup.enter.native="handleAdd"
           />
         </el-form-item>

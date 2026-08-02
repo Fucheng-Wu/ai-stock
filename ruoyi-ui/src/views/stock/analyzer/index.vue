@@ -11,7 +11,7 @@
           v-model="stockCode"
           clearable
           prefix-icon="el-icon-search"
-          placeholder="输入 600519 或 sh600519"
+          placeholder="输入股票或ETF代码，如 600519、510300"
           @keyup.enter.native="handleAnalyze"
         />
         <el-button type="primary" :loading="loading" @click="handleAnalyze">
@@ -49,7 +49,7 @@
           <i class="el-icon-data-analysis stock-empty__icon" />
           <div class="stock-empty__title">输入股票代码，生成分析报告</div>
           <p class="stock-empty__description">
-            支持 sh/sz 前缀或 6 位代码。系统将计算 MA5、MA20、交易信号并生成 AI 辅助建议。
+            支持沪深股票和场内 ETF，可输入 sh/sz 前缀或 6 位代码。系统将计算 MA5、MA20、交易信号并生成 AI 辅助建议。
           </p>
           <el-button type="primary" plain class="empty-action" @click="focusSearch">试试 600519</el-button>
         </div>

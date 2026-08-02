@@ -19,6 +19,8 @@ class StockWatchlistServiceImplTest
 
         assertEquals("600519", service.normalizeStockCode(" sh600519 "));
         assertEquals("000001", service.normalizeStockCode("sz000001"));
+        assertEquals("510300", service.normalizeStockCode("510300"));
+        assertEquals("159915", service.normalizeStockCode("sz159915"));
         assertThrows(ServiceException.class, () -> service.normalizeStockCode("hk00700"));
     }
 

@@ -25,7 +25,10 @@ import com.ruoyi.system.domain.stock.StockAnalysisResult;
 import com.ruoyi.system.domain.stock.StockKlineData;
 import com.ruoyi.system.domain.stock.StockRealtimeData;
 import com.ruoyi.system.domain.stock.StrategyReport;
+import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.IStockAnalyzerService;
+import com.ruoyi.system.service.support.StockConfigKeys;
+import com.ruoyi.system.service.support.StockCodeUtils;
 
 @Service
 public class StockAnalyzerServiceImpl implements IStockAnalyzerService
@@ -41,6 +44,9 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
 
     @Autowired
     private RestTemplate restTemplate;
+
+    @Autowired
+    private ISysConfigService configService;
 
     @Value("${deepseek.api-key:}")
     private String deepseekApiKey;
@@ -126,16 +132,17 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
 
     private void applyAi(StockAnalysisResult result)
     {
-        if (!StringUtils.hasText(deepseekApiKey))
+        String apiKey = resolveDeepseekApiKey();
+        if (!StringUtils.hasText(apiKey))
         {
             result.setAiAdvice("未配置 DeepSeek API Key");
-            result.setAiReason("规则报告已生成；配置 deepseek.api-key 后可获取综合解读");
+            result.setAiReason("规则报告已生成；请在系统管理 → 参数设置中配置 stock.deepseek.apiKey");
             result.setRiskLevel("未知");
             return;
         }
         try
         {
-            String[] aiResult = callDeepSeek(result);
+            String[] aiResult = callDeepSeek(result, apiKey);
             result.setAiAdvice(aiResult[0]);
             result.setAiReason(aiResult[1]);
             result.setRiskLevel(aiResult[2]);
@@ -149,6 +156,27 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         }
     }
 
+    String resolveDeepseekApiKey()
+    {
+        try
+        {
+            if (configService != null)
+            {
+                String configuredKey = configService.selectConfigByKey(StockConfigKeys.DEEPSEEK_API_KEY);
+                if (StringUtils.hasText(configuredKey))
+                {
+                    return configuredKey.trim();
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            log.warn("读取若依参数 {} 失败，将使用 application.yml 回退配置: {}",
+                    StockConfigKeys.DEEPSEEK_API_KEY, e.getMessage());
+        }
+        return StringUtils.hasText(deepseekApiKey) ? deepseekApiKey.trim() : "";
+    }
+
     @Override
     public String resolveStockName(String stockCode)
     {
@@ -157,10 +185,6 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
             throw new ServiceException("请输入股票代码");
         }
         String code = normalizeCode(stockCode);
-        if (!code.matches("(sh6|sz[03])\\d{5}"))
-        {
-            throw new ServiceException("股票代码格式不正确");
-        }
         StockRealtimeData stock = fetchRealtimeData(code);
         if (stock == null || !StringUtils.hasText(stock.getName()))
         {
@@ -174,22 +198,9 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         return includeAi;
     }
 
-    private String normalizeCode(String code)
+    String normalizeCode(String code)
     {
-        code = code.trim().toLowerCase();
-        if (code.startsWith("sh") || code.startsWith("sz"))
-        {
-            return code;
-        }
-        if (code.startsWith("6"))
-        {
-            return "sh" + code;
-        }
-        else if (code.startsWith("0") || code.startsWith("3"))
-        {
-            return "sz" + code;
-        }
-        return code;
+        return StockCodeUtils.normalizeMarketCode(code);
     }
 
     private StockRealtimeData fetchRealtimeData(String code)
@@ -423,7 +434,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
         }
     }
 
-    private String[] callDeepSeek(StockAnalysisResult result)
+    private String[] callDeepSeek(StockAnalysisResult result, String apiKey)
     {
         String prompt = String.format(
                 "你是一位资深A股技术分析专家。规则事实已由后端确定，不得改写。\n\n" +
@@ -439,7 +450,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(deepseekApiKey);
+        headers.setBearerAuth(apiKey);
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", DEEPSEEK_MODEL);

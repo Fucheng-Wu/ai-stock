@@ -24,6 +24,8 @@ class StockPositionServiceImplTest {
     assertEquals("sh", service.marketForCode("600519"));
     assertEquals("sz", service.marketForCode("000001"));
     assertEquals("sz", service.marketForCode("300750"));
+    assertEquals("sh", service.marketForCode("510300"));
+    assertEquals("sz", service.marketForCode("159915"));
     try (InputStream input = getClass().getClassLoader().getResourceAsStream("mapper/stock/StockPositionMapper.xml")) {
       String xml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
       assertEquals(true, xml.contains("stock_name,market,cost_price"));

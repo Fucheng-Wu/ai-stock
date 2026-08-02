@@ -21,6 +21,7 @@ import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.system.domain.SysConfig;
 import com.ruoyi.system.service.ISysConfigService;
+import com.ruoyi.system.service.support.StockConfigKeys;
 
 /**
  * 参数配置 信息操作处理
@@ -72,6 +73,10 @@ public class SysConfigController extends BaseController
     @GetMapping(value = "/configKey/{configKey}")
     public AjaxResult getConfigKey(@PathVariable String configKey)
     {
+        if (StockConfigKeys.isSensitive(configKey))
+        {
+            return error("敏感参数不支持按键名直接查询");
+        }
         return success(configService.selectConfigByKey(configKey));
     }
 

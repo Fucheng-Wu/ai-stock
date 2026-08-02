@@ -148,7 +148,7 @@ xss:
 
 # DeepSeek AI 配置
 deepseek:
-  # API Key（必填，否则AI分析将跳过）
+  # API Key 回退配置（系统管理 → 参数设置中的 stock.deepseek.apiKey 优先）
   api-key: ${DEEPSEEK_API_KEY:}
   # API 地址
   base-url: https://api.deepseek.com/v1/chat/completions

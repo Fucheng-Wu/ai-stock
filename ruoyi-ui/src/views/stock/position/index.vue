@@ -202,7 +202,7 @@
     >
       <el-form :model="addForm" label-width="88px">
         <el-form-item label="股票代码" required>
-          <el-input v-model="addForm.stockCode" placeholder="例如 600519" />
+          <el-input v-model="addForm.stockCode" placeholder="例如 600519、510300 或 159915" />
         </el-form-item>
         <el-form-item label="成本价" required>
           <el-input-number v-model="addForm.costPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" />

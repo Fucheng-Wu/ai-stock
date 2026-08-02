@@ -107,7 +107,11 @@
       <el-table-column label="参数主键" align="center" prop="configId" />
       <el-table-column label="参数名称" align="center" prop="configName" :show-overflow-tooltip="true" />
       <el-table-column label="参数键名" align="center" prop="configKey" :show-overflow-tooltip="true" />
-      <el-table-column label="参数键值" align="center" prop="configValue" :show-overflow-tooltip="true" />
+      <el-table-column label="参数键值" align="center" prop="configValue" :show-overflow-tooltip="true">
+        <template slot-scope="scope">
+          <span>{{ displayConfigValue(scope.row) }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="系统内置" align="center" prop="configType">
         <template slot-scope="scope">
           <dict-tag :options="dict.type.sys_yes_no" :value="scope.row.configType"/>
@@ -157,7 +161,15 @@
           <el-input v-model="form.configKey" placeholder="请输入参数键名" />
         </el-form-item>
         <el-form-item label="参数键值" prop="configValue">
-          <el-input v-model="form.configValue" type="textarea" placeholder="请输入参数键值" />
+          <el-input
+            v-if="isSecretConfigKey(form.configKey)"
+            v-model="form.configValue"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="请输入 DeepSeek API Key"
+          />
+          <el-input v-else v-model="form.configValue" type="textarea" placeholder="请输入参数键值" />
         </el-form-item>
         <el-form-item label="系统内置" prop="configType">
           <el-radio-group v-model="form.configType">
@@ -236,6 +248,15 @@ export default {
     this.getList()
   },
   methods: {
+    isSecretConfigKey(configKey) {
+      return configKey === 'stock.deepseek.apiKey'
+    },
+    displayConfigValue(row) {
+      if (this.isSecretConfigKey(row && row.configKey)) {
+        return row.configValue ? '••••••••' : '未配置'
+      }
+      return row ? row.configValue : ''
+    },
     /** 查询参数列表 */
     getList() {
       this.loading = true

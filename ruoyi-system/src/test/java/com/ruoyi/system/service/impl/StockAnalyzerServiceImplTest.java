@@ -5,7 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,6 +17,8 @@ import org.junit.jupiter.api.Test;
 import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.system.domain.stock.StockKlineData;
 import com.ruoyi.system.domain.stock.StockRealtimeData;
+import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.system.service.ISysConfigService;
 
 class StockAnalyzerServiceImplTest
 {
@@ -22,6 +27,31 @@ class StockAnalyzerServiceImplTest
     {
         assertFalse(StockAnalyzerServiceImpl.shouldCallAi(false));
         assertTrue(StockAnalyzerServiceImpl.shouldCallAi(true));
+    }
+
+    @Test
+    void normalizesAStockAndEtfCodesWithMarketPrefixes()
+    {
+        StockAnalyzerServiceImpl service = new StockAnalyzerServiceImpl();
+
+        assertEquals("sh600519", service.normalizeCode("600519"));
+        assertEquals("sz000001", service.normalizeCode("000001"));
+        assertEquals("sh510300", service.normalizeCode("510300"));
+        assertEquals("sz159915", service.normalizeCode("159915"));
+        assertEquals("sh510300", service.normalizeCode(" sh510300 "));
+        assertThrows(ServiceException.class, () -> service.normalizeCode("hk00700"));
+    }
+
+    @Test
+    void prefersSysConfigDeepseekKeyAndFallsBackToYaml() throws Exception
+    {
+        StockAnalyzerServiceImpl service = new StockAnalyzerServiceImpl();
+        setField(service, "deepseekApiKey", " yml-key ");
+        setField(service, "configService", configServiceReturning(" parameter-key "));
+        assertEquals("parameter-key", service.resolveDeepseekApiKey());
+
+        setField(service, "configService", configServiceReturning(" "));
+        assertEquals("yml-key", service.resolveDeepseekApiKey());
     }
 
     @Test
@@ -150,5 +180,21 @@ class StockAnalyzerServiceImplTest
         bar.put("l", low);
         bar.put("v", volume);
         return bar;
+    }
+
+    private ISysConfigService configServiceReturning(String value)
+    {
+        return (ISysConfigService) Proxy.newProxyInstance(
+            ISysConfigService.class.getClassLoader(),
+            new Class<?>[]{ISysConfigService.class},
+            (proxy, method, args) -> "selectConfigByKey".equals(method.getName()) ? value : null
+        );
+    }
+
+    private void setField(Object target, String name, Object value) throws Exception
+    {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 }
