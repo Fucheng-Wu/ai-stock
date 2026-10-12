@@ -62,5 +62,5 @@ module.exports = {
   /**
    * 底部版权文本内容
    */
-  footerContent: 'Copyright © 2026 520均线智析系统. All Rights Reserved.'
+  footerContent: 'Copyright © 2026 orange的工作台. All Rights Reserved.'
 }

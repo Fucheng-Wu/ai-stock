@@ -1,7 +1,7 @@
 {
   "name": "ruoyi",
   "version": "3.9.2",
-  "description": "520均线智析系统",
+  "description": "orange的工作台",
   "author": "若依",
   "license": "MIT",
   "scripts": {

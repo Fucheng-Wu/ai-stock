@@ -2,7 +2,7 @@
   <div class="app-container home">
     <el-row :gutter="20">
       <el-col :sm="24" :lg="12" style="padding-left: 20px">
-        <h2>520均线智析系统</h2>
+        <h2>orange的工作台</h2>
         <p>
           面向 520 均线策略的股票分析平台，统一提供实时行情、K 线与均线指标、交易信号、AI 综合解读、自选管理和持仓管理，帮助用户更清晰地跟踪标的并形成结构化分析报告。
         </p>
