@@ -79,52 +79,60 @@
       </div>
 
       <div v-loading="loading" class="todo-list-wrap">
-        <transition-group v-if="visibleTasks.length" name="todo-list" tag="ul" class="todo-list">
-          <li
-            v-for="task in visibleTasks"
-            :key="task.taskId"
-            class="todo-item"
-            :class="{ 'is-done': task.status === '1' }"
-          >
-            <div v-if="editingId === task.taskId" class="todo-edit">
-              <el-input
-                v-model="editForm.content"
-                class="todo-edit__input"
-                maxlength="500"
-                @keyup.enter.native="handleSaveEdit"
-              />
-              <el-select v-model="editForm.category" class="todo-edit__category">
-                <el-option v-for="item in categories" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-              <el-button type="primary" size="small" :loading="saving" @click="handleSaveEdit">保存</el-button>
-              <el-button size="small" @click="cancelEdit">取消</el-button>
-            </div>
-            <template v-else>
-              <button
-                type="button"
-                class="todo-check"
-                :class="{ 'is-checked': task.status === '1' }"
-                :disabled="togglingId === task.taskId"
-                :title="task.status === '1' ? '标记为未完成' : '标记为已完成'"
-                @click="handleToggle(task)"
+        <template v-if="groupedTasks.length">
+          <section v-for="group in groupedTasks" :key="group.value" class="todo-group">
+            <header class="todo-group__header">
+              <span class="todo-group__dot" :class="'todo-group__dot--' + group.theme" />
+              <span class="todo-group__title">{{ group.label }}</span>
+              <span class="todo-group__count">{{ group.tasks.length }}</span>
+            </header>
+            <ul class="todo-list">
+              <li
+                v-for="task in group.tasks"
+                :key="task.taskId"
+                class="todo-item"
+                :class="{ 'is-done': task.status === '1' }"
               >
-                <i v-if="task.status === '1'" class="el-icon-check" />
-              </button>
-              <p class="todo-item__content">{{ task.content }}</p>
-              <span class="todo-tag" :class="'todo-tag--' + themeOf(task.category)">{{ task.category }}</span>
-              <div class="todo-item__actions">
-                <el-button v-hasPermi="['todo:task:edit']" type="text" icon="el-icon-edit" @click="startEdit(task)">编辑</el-button>
-                <el-button
-                  v-hasPermi="['todo:task:remove']"
-                  type="text"
-                  icon="el-icon-delete"
-                  class="todo-action-danger"
-                  @click="handleRemove(task)"
-                >删除</el-button>
-              </div>
-            </template>
-          </li>
-        </transition-group>
+                <div v-if="editingId === task.taskId" class="todo-edit">
+                  <el-input
+                    v-model="editForm.content"
+                    class="todo-edit__input"
+                    maxlength="500"
+                    @keyup.enter.native="handleSaveEdit"
+                  />
+                  <el-select v-model="editForm.category" class="todo-edit__category">
+                    <el-option v-for="item in categories" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-select>
+                  <el-button type="primary" size="small" :loading="saving" @click="handleSaveEdit">保存</el-button>
+                  <el-button size="small" @click="cancelEdit">取消</el-button>
+                </div>
+                <template v-else>
+                  <button
+                    type="button"
+                    class="todo-check"
+                    :class="{ 'is-checked': task.status === '1' }"
+                    :disabled="togglingId === task.taskId"
+                    :title="task.status === '1' ? '标记为未完成' : '标记为已完成'"
+                    @click="handleToggle(task)"
+                  >
+                    <i v-if="task.status === '1'" class="el-icon-check" />
+                  </button>
+                  <p class="todo-item__content">{{ task.content }}</p>
+                  <div class="todo-item__actions">
+                    <el-button v-hasPermi="['todo:task:edit']" type="text" icon="el-icon-edit" @click="startEdit(task)">编辑</el-button>
+                    <el-button
+                      v-hasPermi="['todo:task:remove']"
+                      type="text"
+                      icon="el-icon-delete"
+                      class="todo-action-danger"
+                      @click="handleRemove(task)"
+                    >删除</el-button>
+                  </div>
+                </template>
+              </li>
+            </ul>
+          </section>
+        </template>
 
         <div v-else-if="!loading" class="todo-empty">
           <i class="el-icon-tickets todo-empty__icon" />
@@ -183,14 +191,21 @@ export default {
         { label: '已完成', value: 'done', count: this.doneCount }
       ]
     },
-    visibleTasks() {
-      return this.rows.filter(task => {
-        const statusMatched = this.statusFilter === 'all'
-          || (this.statusFilter === 'pending' && task.status !== '1')
-          || (this.statusFilter === 'done' && task.status === '1')
-        const categoryMatched = this.categoryFilter === ALL_CATEGORY || task.category === this.categoryFilter
-        return statusMatched && categoryMatched
-      })
+    groupedTasks() {
+      return this.categories
+        .filter(category => this.categoryFilter === ALL_CATEGORY || category.value === this.categoryFilter)
+        .map(category => ({
+          value: category.value,
+          label: category.label,
+          theme: category.theme,
+          tasks: this.rows.filter(task => {
+            const statusMatched = this.statusFilter === 'all'
+              || (this.statusFilter === 'pending' && task.status !== '1')
+              || (this.statusFilter === 'done' && task.status === '1')
+            return task.category === category.value && statusMatched
+          })
+        }))
+        .filter(group => group.tasks.length > 0)
     },
     emptyTitle() {
       return this.rows.length === 0 ? '还没有待办' : '没有符合条件的待办'
@@ -205,10 +220,6 @@ export default {
     this.getList()
   },
   methods: {
-    themeOf(category) {
-      const found = CATEGORIES.find(item => item.value === category)
-      return found ? found.theme : 'other'
-    },
     chipClass(item) {
       return 'todo-chip--' + item.theme
     },
@@ -703,6 +714,59 @@ export default {
   min-height: 140px;
 }
 
+.todo-group {
+  margin-bottom: 6px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.todo-group__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px 8px;
+}
+
+.todo-group__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.45);
+}
+
+.todo-group__dot--work {
+  background: linear-gradient(160deg, #4da3ff, #0a7cff);
+}
+
+.todo-group__dot--study {
+  background: linear-gradient(160deg, #cb7bf5, #a63ee0);
+}
+
+.todo-group__dot--life {
+  background: linear-gradient(160deg, #4ade80, #16a34a);
+}
+
+.todo-group__title {
+  color: var(--todo-text);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.todo-group__count {
+  padding: 1px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  color: var(--todo-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
 .todo-list {
   margin: 0;
   padding: 0;
@@ -776,37 +840,6 @@ export default {
 .todo-item.is-done .todo-item__content {
   color: var(--todo-subtle);
   text-decoration: line-through;
-}
-
-.todo-tag {
-  flex-shrink: 0;
-  padding: 3px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 999px;
-  background: rgba(120, 120, 128, 0.1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  color: var(--todo-muted);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 17px;
-}
-
-.todo-tag--work {
-  border-color: rgba(10, 132, 255, 0.24);
-  background: rgba(10, 132, 255, 0.14);
-  color: var(--todo-primary-deep);
-}
-
-.todo-tag--study {
-  border-color: rgba(191, 90, 242, 0.24);
-  background: rgba(191, 90, 242, 0.14);
-  color: #9637d9;
-}
-
-.todo-tag--life {
-  border-color: rgba(48, 209, 88, 0.26);
-  background: rgba(48, 209, 88, 0.16);
-  color: #1a9e4a;
 }
 
 .todo-item__actions {
@@ -918,27 +951,9 @@ export default {
   line-height: 1.7;
 }
 
-.todo-list-enter-active,
-.todo-list-leave-active,
-.todo-list-move {
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease;
-}
-
-.todo-list-enter,
-.todo-list-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .todo-ambient__blob {
     animation: none;
-  }
-
-  .todo-list-enter-active,
-  .todo-list-leave-active,
-  .todo-list-move {
-    transition: none;
   }
 }
 
