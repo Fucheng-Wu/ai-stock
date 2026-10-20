@@ -9,6 +9,7 @@
 | 股票管理（520战法） | 内置页面，菜单 2000，order=5 | 已实现 |
 | JupyterLab控制台 | 外链 iframe，菜单 2013，order=6 | 已部署 |
 | 个人待办清单 | 内置页面，菜单 2014，order=7 | 已实现 |
+| Agent助手 | 内置页面，菜单 2018，order=8 | 已实现 |
 
 历史菜单 Hermes控制台（2011）、Pi控制台（2012）已隐藏（visible='1'），终端能力统一由 JupyterLab 提供。
 
@@ -93,3 +94,17 @@ deepseek:
 - 后端：`ruoyi-admin/.../controller/todo/TodoTaskController.java`（`/todo/task` list/add/update/delete）、`ruoyi-system/.../service/ITodoTaskService.java`、`impl/TodoTaskServiceImpl.java`、`domain/todo/TodoTask.java`、`mapper/todo/TodoTaskMapper.java`、`resources/mapper/todo/TodoTaskMapper.xml`。
 - 前端：`ruoyi-ui/src/api/todo/task.js`、`ruoyi-ui/src/views/todo/index.vue`。
 - 权限标识：`todo:task:list`、`todo:task:add`、`todo:task:edit`、`todo:task:remove`。
+
+## 菜单四：Agent助手
+
+- 页面：`ruoyi-ui/src/views/agent/chat/index.vue`，提供多会话、流式回复、停止生成、思考过程和工具调用展示。
+- 后端：`agent-gateway/backend`，基于 Hono、WebSocket 和 `@earendil-works/pi-coding-agent`，源码与项目一同维护和启动。
+- 共享协议：`agent-gateway/shared/types.ts`，前后端使用 WebSocket v1 消息协议。
+- 会话持久化：`agent-gateway/backend/src/lib/database.ts` 将完整消息、JSONL 备份、模型、思考强度和上下文用量保存到 MySQL；本地历史会自动导入，JSONL 丢失时可从数据库重建。
+- 数据表：`sql/agent_chat.sql` 创建 `agent_chat_session`；连接参数位于 `agent-gateway/.env`（模板为 `.env.example`）。
+- 启动：首次使用 `.\bin\start-agent-gateway.ps1 -Install`，后续使用 `.\bin\start-agent-gateway.ps1`；默认 Agent 工作目录为本仓库根目录。
+- 协议：直接使用 `pi-agent-gateway` 的 WebSocket v1 协议；前端默认连接同源 `/agent-ws`。
+- 开发代理：`ruoyi-ui/vue.config.js` 将 `/agent-ws` 转发到 `http://127.0.0.1:3000/ws`。
+- 生产部署：nginx 反代与安全注意事项见 `docs/agent-chat-deployment.md`。
+- 菜单 SQL：`sql/agent_chat_menu.sql`（菜单 2018，order=8），默认只授权角色 1、4。
+- 权限标识：`agent:chat:use`。

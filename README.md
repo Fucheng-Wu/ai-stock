@@ -15,6 +15,7 @@
 - **按需 AI 分析**：点击“AI 分析”可主动刷新 DeepSeek 解读；自动刷新时只有完整 K 线发生变化才重新生成 AI 内容。
 - **自选快照**：自选分析结果保存到数据库，再次展开时直接读取最近一次分析。
 - **持仓快照**：持仓分析结果保存到数据库，再次展开时可直接读取最近一次分析。
+- **Agent 助手**：项目内置 Pi Agent Gateway，支持多会话、流式回复、思考过程和工具调用。
 
 ## 页面说明
 
@@ -50,6 +51,13 @@
 - 新浪行情接口：历史 K 线数据
 - DeepSeek API：AI 综合解读（可选）
 
+### Agent Gateway
+
+- Node.js 22.19+
+- pnpm 10+
+- Hono + WebSocket
+- `@earendil-works/pi-coding-agent`
+
 ## 分析流程
 
 ```text
@@ -73,6 +81,8 @@ ai-stock/
 ├─ ruoyi-system/      # 股票分析、策略规则、持仓和自选业务
 ├─ ruoyi-common/      # 通用模块
 ├─ ruoyi-ui/          # Vue 前端
+├─ agent-gateway/     # Pi Agent Gateway 后端与共享协议
+├─ bin/               # Agent Gateway 等启动脚本
 └─ sql/               # 基础数据库与股票功能 SQL
 ```
 
@@ -92,13 +102,13 @@ ruoyi-ui/src/components/StockStrategyReport/
 
 - JDK 17+
 - Maven 3.9+
-- Node.js 16+ 与 npm
+- Node.js 22.19+、npm 与 pnpm 10+
 - MySQL 8+
 - Redis 6+
 
 ## 初始化数据库
 
-1. 创建数据库，例如 `ry-vue`。
+1. 创建数据库 `ai_stock`。
 2. 执行若依基础表结构：
 
    ```text
@@ -110,9 +120,14 @@ ruoyi-ui/src/components/StockStrategyReport/
 
    ```text
    sql/stock_menu.sql
+   sql/todo_menu.sql
+   sql/agent_chat.sql
+   sql/agent_chat_menu.sql
    ```
 
-`stock_menu.sql` 会创建自选、持仓、账户和持仓分析快照表，并初始化股票管理菜单与权限。
+`stock_menu.sql` 会创建自选、持仓、账户和持仓分析快照表；`agent_chat.sql` 创建
+Agent 会话持久化表，其余 SQL 初始化待办清单和 Agent 助手菜单。Agent 助手默认只
+授权角色 1 和 4。
 
 ## 配置
 
@@ -143,6 +158,30 @@ $env:DEEPSEEK_API_KEY="你的 DeepSeek API Key"
 
 ## 启动项目
 
+### Windows 一键启动
+
+确认 MySQL、Redis 已启动，且 `agent-gateway/.env` 已配置后，直接双击项目根目录的：
+
+```text
+start-all.cmd
+```
+
+脚本会分别打开 RuoYi 后端、Agent Gateway 和 Vue 前端三个终端。缺少 Node 依赖时会
+自动安装，缺少 RuoYi JAR 时会自动执行 Maven 打包。修改依赖或 Java 代码后需要强制
+重新安装、打包时，可在 PowerShell 中执行：
+
+```powershell
+.\start-all.cmd -Prepare
+```
+
+首次使用前如没有 Agent 配置文件，先执行并填写 MySQL 信息：
+
+```powershell
+Copy-Item agent-gateway\.env.example agent-gateway\.env
+```
+
+以下是三个服务分别启动的方式。
+
 ### 1. 启动后端
 
 ```powershell
@@ -152,7 +191,31 @@ java -jar ruoyi-admin/target/ruoyi-admin.jar
 
 后端默认地址：`http://localhost:8080`
 
-### 2. 启动前端
+### 2. 启动 Agent Gateway
+
+复制配置模板并填写与若依相同的 MySQL 连接信息：
+
+```powershell
+Copy-Item agent-gateway\.env.example agent-gateway\.env
+```
+
+首次启动会在项目内安装 Agent 后端依赖：
+
+```powershell
+.\bin\start-agent-gateway.ps1 -Install
+```
+
+后续启动：
+
+```powershell
+.\bin\start-agent-gateway.ps1
+```
+
+Agent Gateway 默认监听 `http://127.0.0.1:3000`，并以当前仓库根目录作为 Agent
+工作目录。模型认证默认读取 `~/.pi/agent`，所有会话同步持久化到 MySQL 的
+`agent_chat_session` 表；已有 Pi JSONL 会话会在首次启动时自动导入。
+
+### 3. 启动前端
 
 ```powershell
 cd ruoyi-ui
@@ -161,6 +224,17 @@ npm run dev
 ```
 
 前端默认地址：`http://localhost`
+
+前端通过 `/agent-ws` 连接 Agent Gateway；开发代理已经配置。生产环境的 nginx 配置
+见 `docs/agent-chat-deployment.md`。
+
+生产部署可直接使用项目内的打包脚本和模板：
+
+```powershell
+.\bin\package-deploy.ps1 -Version 0.0.8
+```
+
+完整服务器部署步骤见 `deploy/README.md`。
 
 若使用若依初始化数据，可通过默认账号登录：`admin / admin123`。部署到公开环境前请立即修改默认密码。
 
@@ -180,6 +254,7 @@ npm run dev
 | DELETE | `/stock/position/{id}` | 删除持仓 |
 | GET | `/stock/position/{id}/analysis` | 读取持仓分析快照 |
 | POST | `/stock/position/{id}/analyze` | 重新分析持仓 |
+| WS | `/agent-ws` | Agent Gateway 会话、流式回复与工具事件 |
 
 请求需要登录，并受对应的 `stock:*` 权限控制。
 

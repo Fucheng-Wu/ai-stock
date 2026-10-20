@@ -1,0 +1,22 @@
+ruoyi:
+  profile: /home/wufc/ai-stock/uploadPath
+
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: druid
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
+
+token:
+  secret: ${TOKEN_SECRET:CHANGE_THIS_TO_A_LONG_RANDOM_VALUE}
+
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:}
+  base-url: https://api.deepseek.com/v1/chat/completions

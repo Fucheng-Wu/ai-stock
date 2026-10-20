@@ -56,3 +56,11 @@ nbdist/
 
 # PowerShell module analysis cache created by local tooling
 ruoyi-ui/Microsoft/
+
+# Embedded Pi Agent Gateway
+agent-gateway/node_modules/
+agent-gateway/dist/
+agent-gateway/.env
+agent-gateway/.env.*
+!agent-gateway/.env.example
+agent-gateway/*.tsbuildinfo

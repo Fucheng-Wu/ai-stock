@@ -10,6 +10,7 @@ const CompressionPlugin = require('compression-webpack-plugin')
 const name = process.env.VUE_APP_TITLE || 'orange的工作台' // 网页标题
 
 const baseUrl = 'http://localhost:8080' // 后端接口
+const agentGatewayUrl = process.env.AGENT_GATEWAY_URL || 'http://127.0.0.1:3000'
 
 const port = process.env.port || process.env.npm_config_port || 80 // 端口
 
@@ -34,6 +35,19 @@ module.exports = {
     port: port,
     open: true,
     proxy: {
+      // Pi Agent Gateway WebSocket
+      '^/agent-ws': {
+        target: agentGatewayUrl,
+        ws: true,
+        changeOrigin: true,
+        pathRewrite: {
+          '^/agent-ws': '/ws'
+        },
+        onProxyReqWs(proxyReq) {
+          // Gateway 默认只接受本机 Origin，开发代理需改写来源。
+          proxyReq.setHeader('Origin', agentGatewayUrl)
+        }
+      },
       // detail: https://cli.vuejs.org/config/#devserver-proxy
       [process.env.VUE_APP_BASE_API]: {
         target: baseUrl,

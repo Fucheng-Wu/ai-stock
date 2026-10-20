@@ -1,0 +1,18 @@
+[Unit]
+Description=Orange Workbench RuoYi Backend
+After=network.target mysql.service redis-server.service
+
+[Service]
+Type=simple
+User=wufc
+Group=wufc
+WorkingDirectory=/home/wufc/ai-stock
+EnvironmentFile=/home/wufc/ai-stock/config/ai-stock.env
+ExecStart=/usr/bin/java -jar /home/wufc/ai-stock/ruoyi-admin.jar --spring.config.additional-location=file:/home/wufc/ai-stock/config/
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

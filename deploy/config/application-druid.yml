@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    druid:
+      master:
+        url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:ai_stock}?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8
+        username: ${DB_USER:ai_stock}
+        password: ${DB_PASSWORD:CHANGE_ME}
+      slave:
+        enabled: false

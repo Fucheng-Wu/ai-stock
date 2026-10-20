@@ -1,0 +1,20 @@
+[Unit]
+Description=Orange Workbench Pi Agent Gateway
+After=network.target mysql.service ai-stock.service
+
+[Service]
+Type=simple
+User=wufc
+Group=wufc
+WorkingDirectory=/home/wufc/ai-stock/agent-gateway
+EnvironmentFile=/home/wufc/ai-stock/config/agent-gateway.env
+Environment=HOME=/home/wufc
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env pnpm start
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target
