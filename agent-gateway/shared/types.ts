@@ -155,7 +155,8 @@ export type ClientMessage = CommandBase & (
   | { type: "create_session" }
   | { type: "load_session"; sessionId: string }
   | { type: "delete_session"; sessionId: string }
-  | { type: "prompt"; sessionId: string; text: string }
+  // 仅供网关在本轮调用业务接口；不写入模型消息或会话存储。
+  | { type: "prompt"; sessionId: string; text: string; stockAccessToken?: string }
   | { type: "abort"; sessionId: string }
   | { type: "set_model"; sessionId: string; provider: string; modelId: string }
   | { type: "set_thinking_level"; sessionId: string; level: ThinkingLevel }

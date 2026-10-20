@@ -171,7 +171,12 @@
               </div>
 
               <div v-if="message.role === 'user'" class="agent-user-bubble">{{ message.text }}</div>
-              <div v-else-if="message.text" class="agent-markdown" v-html="renderMarkdown(message.text)" />
+              <agent-markdown
+                v-else-if="message.text"
+                :text="message.text"
+                :streaming="isMessageStreaming(message)"
+                @layout="handleRichContentLayout"
+              />
               <div v-else-if="isMessageStreaming(message) && !message.thinking && !(message.tools && message.tools.length)" class="agent-typing" aria-label="Agent 正在回复">
                 <span /><span /><span />
               </div>
@@ -241,41 +246,16 @@
 
 <script>
 import { AGENT_PROTOCOL_VERSION, getAgentWebSocketUrl } from '@/utils/agentSocket'
+import { getToken } from '@/utils/auth'
+import AgentMarkdown from './components/AgentMarkdown.vue'
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-}
-
-function renderInlineMarkdown(value) {
-  const codeTokens = []
-  let content = String(value || '').replace(/`([^`\n]+)`/g, (match, code) => {
-    const token = `\uE000INLINE${codeTokens.length}\uE001`
-    codeTokens.push(`<code>${escapeHtml(code)}</code>`)
-    return token
-  })
-
-  content = escapeHtml(content)
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1<em>$2</em>')
-
-  codeTokens.forEach((html, index) => {
-    content = content.replace(`\uE000INLINE${index}\uE001`, html)
-  })
-  return content
-}
-
 export default {
   name: 'AgentChat',
+  components: { AgentMarkdown },
   data() {
     return {
       socketClient: null,
@@ -527,13 +507,9 @@ export default {
       if (!snapshot || !snapshot.summary) return
       const messages = Array.isArray(snapshot.messages) ? snapshot.messages.map(this.normalizeMessage) : []
       let streamMessageId = ''
-      if (snapshot.isStreaming) {
-        for (let index = messages.length - 1; index >= 0; index -= 1) {
-          if (messages[index].role === 'assistant') {
-            streamMessageId = messages[index].id
-            break
-          }
-        }
+      const lastMessage = messages[messages.length - 1]
+      if (snapshot.isStreaming && lastMessage && lastMessage.role === 'assistant') {
+        streamMessageId = lastMessage.id
       }
       const state = {
         summary: { ...snapshot.summary },
@@ -587,8 +563,9 @@ export default {
         }
         case 'tool_update':
         case 'tool_end': {
-          const assistant = this.ensureAssistantMessage(state)
-          const tool = assistant.tools.find(item => item.id === event.toolCallId)
+          // 工具结果应回写原调用者，不能因没有 streamMessageId 就新建回复。
+          const owner = state.messages.slice().reverse().find(item => item.tools.some(tool => tool.id === event.toolCallId))
+          const tool = owner && owner.tools.find(item => item.id === event.toolCallId)
           if (tool) {
             if (event.output !== undefined) this.$set(tool, 'output', event.output)
             if (event.type === 'tool_end') this.$set(tool, 'status', event.isError ? 'error' : 'done')
@@ -650,11 +627,16 @@ export default {
         const streamIndex = state.messages.findIndex(item => item.id === state.streamMessageId)
         if (streamIndex >= 0) {
           this.$set(state.messages, streamIndex, normalized)
-          state.streamMessageId = ''
+          // message_end 仅结束一次模型输出；工具调用后的输出仍属于本轮回复。
+          // 与原版网关一致，直到 agent_end 才释放这条气泡。
+          state.streamMessageId = normalized.id
           return
         }
       }
-      if (!state.messages.some(item => item.id === normalized.id)) state.messages.push(normalized)
+      const existingIndex = state.messages.findIndex(item => item.id === normalized.id)
+      if (existingIndex >= 0) this.$set(state.messages, existingIndex, normalized)
+      else state.messages.push(normalized)
+      if (normalized.role === 'assistant' && state.isStreaming) state.streamMessageId = normalized.id
     },
     findLastAssistant(messages) {
       for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -700,7 +682,7 @@ export default {
     sendPromptToActive(prompt) {
       const state = this.activeState
       if (!state || state.isStreaming) return
-      if (!this.sendSocket({ type: 'prompt', sessionId: this.activeSessionId, text: prompt, requestId: createId('prompt') })) return
+      if (!this.sendSocket({ type: 'prompt', sessionId: this.activeSessionId, text: prompt, stockAccessToken: getToken(), requestId: createId('prompt') })) return
       state.messages.push(this.normalizeMessage({
         id: createId('optimistic'),
         role: 'user',
@@ -781,61 +763,8 @@ export default {
         return String(value)
       }
     },
-    renderMarkdown(text) {
-      const lines = String(text || '').replace(/\r\n/g, '\n').split('\n')
-      const output = []
-      let inCode = false
-      let codeLanguage = ''
-      let codeLines = []
-
-      const flushCode = () => {
-        const language = codeLanguage ? `<span>${escapeHtml(codeLanguage)}</span>` : ''
-        output.push(`<div class="agent-code"><div class="agent-code__header">${language || '<span>code</span>'}</div><pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre></div>`)
-        codeLines = []
-        codeLanguage = ''
-      }
-
-      lines.forEach(line => {
-        const fence = line.match(/^```\s*([\w#+.-]*)\s*$/)
-        if (fence) {
-          if (inCode) flushCode()
-          else codeLanguage = fence[1] || ''
-          inCode = !inCode
-          return
-        }
-        if (inCode) {
-          codeLines.push(line)
-          return
-        }
-        if (!line.trim()) {
-          output.push('<div class="agent-markdown__space"></div>')
-          return
-        }
-        const heading = line.match(/^(#{1,3})\s+(.+)$/)
-        if (heading) {
-          const level = heading[1].length + 1
-          output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
-          return
-        }
-        const unordered = line.match(/^\s*[-*+]\s+(.+)$/)
-        if (unordered) {
-          output.push(`<div class="agent-markdown__list"><span>•</span><div>${renderInlineMarkdown(unordered[1])}</div></div>`)
-          return
-        }
-        const ordered = line.match(/^\s*(\d+)[.)]\s+(.+)$/)
-        if (ordered) {
-          output.push(`<div class="agent-markdown__list"><span>${ordered[1]}.</span><div>${renderInlineMarkdown(ordered[2])}</div></div>`)
-          return
-        }
-        const quote = line.match(/^>\s?(.*)$/)
-        if (quote) {
-          output.push(`<blockquote>${renderInlineMarkdown(quote[1])}</blockquote>`)
-          return
-        }
-        output.push(`<p>${renderInlineMarkdown(line)}</p>`)
-      })
-      if (inCode) flushCode()
-      return output.join('')
+    handleRichContentLayout() {
+      this.$nextTick(() => this.scrollToBottom())
     },
     copyMessage(message) {
       const text = message.text || ''
@@ -1834,107 +1763,6 @@ export default {
 
 .agent-sidebar-mask {
   display: none;
-}
-
-::v-deep .agent-markdown {
-  color: #383836;
-  font-size: 13px;
-  line-height: 1.75;
-  overflow-wrap: anywhere;
-
-  p {
-    margin: 0;
-  }
-
-  h2,
-  h3,
-  h4 {
-    margin: 15px 0 7px;
-    color: #292927;
-    font-weight: 700;
-    line-height: 1.4;
-  }
-
-  h2 { font-size: 18px; }
-  h3 { font-size: 16px; }
-  h4 { font-size: 14px; }
-
-  strong {
-    color: #292927;
-    font-weight: 700;
-  }
-
-  a {
-    color: #c95c27;
-    text-decoration: none;
-
-    &:hover { text-decoration: underline; }
-  }
-
-  code {
-    padding: 2px 5px;
-    border-radius: 5px;
-    background: #f1f1ee;
-    color: #b64f22;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
-  }
-
-  blockquote {
-    margin: 5px 0;
-    padding: 2px 0 2px 12px;
-    border-left: 3px solid #dedbd5;
-    color: #74716c;
-  }
-
-  .agent-markdown__space {
-    height: 9px;
-  }
-
-  .agent-markdown__list {
-    display: flex;
-    gap: 9px;
-    padding: 2px 0 2px 3px;
-
-    > span {
-      min-width: 14px;
-      color: #817b74;
-      text-align: right;
-    }
-  }
-
-  .agent-code {
-    margin: 9px 0;
-    overflow: hidden;
-    border: 1px solid #353533;
-    border-radius: 10px;
-    background: #242422;
-  }
-
-  .agent-code__header {
-    padding: 6px 11px;
-    border-bottom: 1px solid #3a3a37;
-    color: #aaa9a3;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 9px;
-    text-transform: lowercase;
-  }
-
-  .agent-code pre {
-    max-height: 420px;
-    margin: 0;
-    overflow: auto;
-    padding: 12px 13px;
-  }
-
-  .agent-code code {
-    padding: 0;
-    background: transparent;
-    color: #e6e5df;
-    font-size: 11px;
-    line-height: 1.65;
-    white-space: pre;
-  }
 }
 
 @keyframes agent-typing {

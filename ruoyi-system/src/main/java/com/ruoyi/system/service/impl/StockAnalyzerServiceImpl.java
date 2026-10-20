@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -16,6 +17,7 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -24,6 +26,7 @@ import com.ruoyi.system.domain.stock.AnalysisSignal;
 import com.ruoyi.system.domain.stock.StockAnalysisResult;
 import com.ruoyi.system.domain.stock.StockKlineData;
 import com.ruoyi.system.domain.stock.StockRealtimeData;
+import com.ruoyi.system.domain.stock.StockSearchResult;
 import com.ruoyi.system.domain.stock.StrategyReport;
 import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.IStockAnalyzerService;
@@ -36,6 +39,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
     private static final Logger log = LoggerFactory.getLogger(StockAnalyzerServiceImpl.class);
 
     private static final String TENCENT_API = "http://qt.gtimg.cn/q=";
+    private static final String TENCENT_SEARCH_API = "https://smartbox.gtimg.cn/s3/";
     private static final String SINA_KLINE_API = "https://quotes.sina.cn/cn/api/jsonp.php/var_KC_MarketDataService.getKLineData=/KC_MarketDataService.getKLineData?symbol=%s&scale=240&datalen=300";
     private static final String DEEPSEEK_MODEL = "deepseek-chat";
     private static final Charset GBK = Charset.forName("GBK");
@@ -53,6 +57,125 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
 
     @Value("${deepseek.base-url:https://api.deepseek.com/v1/chat/completions}")
     private String deepseekBaseUrl;
+
+    @Override
+    public List<StockSearchResult> searchStocks(String keyword)
+    {
+        if (!StringUtils.hasText(keyword) || keyword.trim().length() > 40)
+        {
+            throw new ServiceException("请输入1到40个字符的股票名称或代码");
+        }
+        String query = keyword.trim();
+        try
+        {
+            ResponseEntity<byte[]> response = restTemplate.exchange(
+                    UriComponentsBuilder.fromUriString(TENCENT_SEARCH_API)
+                            .queryParam("v", "2").queryParam("q", query)
+                            .queryParam("t", "all").queryParam("c", "1")
+                            .build().encode(StandardCharsets.UTF_8).toUri(),
+                    HttpMethod.GET, null, byte[].class);
+            if (response.getBody() == null)
+            {
+                throw new ServiceException("股票搜索服务未返回数据");
+            }
+            return parseStockSearchResponse(query, new String(response.getBody(), GBK));
+        }
+        catch (ServiceException e)
+        {
+            throw e;
+        }
+        catch (Exception e)
+        {
+            log.warn("腾讯股票名称检索失败: {}", e.getMessage());
+            throw new ServiceException("股票名称搜索暂不可用，请稍后重试或直接提供股票代码");
+        }
+    }
+
+    private List<StockSearchResult> parseStockSearchResponse(String keyword, String text)
+    {
+        // 同一响应可能还附带其他变量，只取 v_hint，避免将整段脚本交给 JSON 解析器。
+        String response = null;
+        for (String line : text.split("\\r?\\n"))
+        {
+            int separator = line.indexOf('=');
+            if (separator >= 0 && "v_hint".equals(line.substring(0, separator).trim()))
+            {
+                response = line.trim();
+                break;
+            }
+        }
+        if (response == null)
+        {
+            throw new ServiceException("股票搜索服务返回格式异常，请稍后重试或直接提供股票代码");
+        }
+        int assignment = response.indexOf('=');
+        String payload = response.substring(assignment + 1).trim();
+        if (payload.endsWith(";")) payload = payload.substring(0, payload.length() - 1).trim();
+        // 只解析字符串字面量以处理中文 Unicode 转义，绝不执行上游 JavaScript。
+        Object decoded = JSON.parse(payload);
+        if (!(decoded instanceof String))
+        {
+            throw new ServiceException("股票搜索服务返回格式异常，请稍后重试或直接提供股票代码");
+        }
+        String hints = (String) decoded;
+        Map<String, StockSearchResult> candidates = new LinkedHashMap<>();
+        if (!hints.isEmpty() && !"N".equals(hints))
+        {
+            for (String hint : hints.split("\\^"))
+            {
+                String[] fields = hint.split("~", -1);
+                if (fields.length < 5) continue;
+                String market = fields[0].trim();
+                String code = fields[1].trim();
+                String name = fields[2].trim();
+                String type = fields[4].trim();
+                if (!("sh".equals(market) || "sz".equals(market)) || !code.matches("\\d{6}")
+                        || !StringUtils.hasText(name)) continue;
+                // 搜索源还包含港美股、债券、LOF等，仅保留当前分析器支持的证券种类。
+                if (!("GP-A".equals(type) || "GP-A-KCB".equals(type)
+                        || "ETF".equals(type) || "ZS".equals(type))) continue;
+                StockSearchResult item = new StockSearchResult();
+                item.setCode(market + code);
+                item.setName(name);
+                item.setMarket(market);
+                item.setSecurityType(type);
+                item.setExactMatch(name.equalsIgnoreCase(keyword) || code.equals(keyword)
+                        || item.getCode().equalsIgnoreCase(keyword));
+                candidates.putIfAbsent(item.getCode(), item);
+            }
+        }
+        List<StockSearchResult> result = new ArrayList<>(candidates.values());
+        result.sort(Comparator.comparing(StockSearchResult::isExactMatch).reversed()
+                .thenComparing(StockSearchResult::getCode));
+        return result;
+    }
+
+    @Override
+    public StockRealtimeData getRealtimeData(String stockCode)
+    {
+        StockRealtimeData stock = fetchRealtimeData(normalizeCode(stockCode));
+        if (stock == null)
+        {
+            throw new ServiceException("无法获取股票实时数据，请检查代码或稍后重试");
+        }
+        return stock;
+    }
+
+    @Override
+    public List<StockKlineData> getKlineData(String stockCode, int limit)
+    {
+        if (limit < 1 || limit > KLINE_DISPLAY_DAYS)
+        {
+            throw new ServiceException("K线条数必须在1到60之间");
+        }
+        // 先使用完整历史计算均线，再截取展示区间，避免短区间的均线缺失。
+        List<StockKlineData> bars = buildKlineChartData(fetchKlineData(normalizeCode(stockCode)));
+        if (bars.isEmpty())
+        {
+            throw new ServiceException("无法获取有效日K线数据，请检查代码或稍后重试");
+        }
+        return new ArrayList<>(bars.subList(Math.max(0, bars.size() - limit), bars.size()));
+    }
 
     @Override
     public StockAnalysisResult analyze(String stockCode)

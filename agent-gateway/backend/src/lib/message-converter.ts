@@ -90,9 +90,10 @@ export function convertMessages(messages: readonly unknown[]): ChatMessage[] {
         };
         converted.push(assistantTurn);
       }
-      assistantTurn.text += text.join("");
+      const nextText = text.join("");
+      if (nextText) assistantTurn.text += `${assistantTurn.text ? "\n\n" : ""}${nextText}`;
       const nextThinking = thinking.join("");
-      if (nextThinking) assistantTurn.thinking = (assistantTurn.thinking ?? "") + nextThinking;
+      if (nextThinking) assistantTurn.thinking = `${assistantTurn.thinking ?? ""}${assistantTurn.thinking ? "\n\n" : ""}${nextThinking}`;
       if (calls.length) assistantTurn.tools = [...(assistantTurn.tools ?? []), ...calls];
       if (error) assistantTurn.error = error;
       return;

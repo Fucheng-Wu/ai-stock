@@ -4,6 +4,9 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,6 +21,27 @@ public class StockAnalyzerController extends BaseController
 {
     @Autowired
     private IStockAnalyzerService stockAnalyzerService;
+
+    @PreAuthorize("@ss.hasPermi('stock:analyzer:analyze')")
+    @GetMapping("/search")
+    public AjaxResult search(@RequestParam String keyword)
+    {
+        return success(stockAnalyzerService.searchStocks(keyword));
+    }
+
+    @PreAuthorize("@ss.hasPermi('stock:analyzer:analyze')")
+    @GetMapping("/quote/{stockCode}")
+    public AjaxResult quote(@PathVariable String stockCode)
+    {
+        return success(stockAnalyzerService.getRealtimeData(stockCode));
+    }
+
+    @PreAuthorize("@ss.hasPermi('stock:analyzer:analyze')")
+    @GetMapping("/kline/{stockCode}")
+    public AjaxResult kline(@PathVariable String stockCode, @RequestParam(defaultValue = "30") int limit)
+    {
+        return success(stockAnalyzerService.getKlineData(stockCode, limit));
+    }
 
     @PreAuthorize("@ss.hasPermi('stock:analyzer:analyze')")
     @PostMapping("/analyze")

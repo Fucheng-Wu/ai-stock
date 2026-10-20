@@ -97,7 +97,8 @@ deepseek:
 
 ## 菜单四：Agent助手
 
-- 页面：`ruoyi-ui/src/views/agent/chat/index.vue`，提供多会话、流式回复、停止生成、思考过程和工具调用展示。
+- 页面：`ruoyi-ui/src/views/agent/chat/index.vue`，提供多会话、流式回复、停止生成、思考过程和工具调用展示。同一轮直到 `agent_end` 才结束流式气泡，不能在中间 `message_end` 清空流式消息 ID；工具结果按调用 ID 回写。
+- 富文本：`ruoyi-ui/src/views/agent/chat/components/AgentMarkdown.vue` 使用 `markdown-it`，代码高亮/复制由 `AgentCodeBlock.vue` 提供，顶层 `echarts` JSON 围栏由 `AgentEchart.vue` 渲染为可预览、查看配置和下载的图表；输出约定在 `agent-gateway/backend/src/lib/response-format.ts`。
 - 后端：`agent-gateway/backend`，基于 Hono、WebSocket 和 `@earendil-works/pi-coding-agent`，源码与项目一同维护和启动。
 - 共享协议：`agent-gateway/shared/types.ts`，前后端使用 WebSocket v1 消息协议。
 - 会话持久化：`agent-gateway/backend/src/lib/database.ts` 将完整消息、JSONL 备份、模型、思考强度和上下文用量保存到 MySQL；本地历史会自动导入，JSONL 丢失时可从数据库重建。
@@ -108,3 +109,6 @@ deepseek:
 - 生产部署：nginx 反代与安全注意事项见 `docs/agent-chat-deployment.md`。
 - 菜单 SQL：`sql/agent_chat_menu.sql`（菜单 2018，order=8），默认只授权角色 1、4。
 - 权限标识：`agent:chat:use`。
+- 股票业务工具：`agent-gateway/backend/src/lib/stock-tools.ts` 注册 `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，通过 `STOCK_API_BASE_URL` 复用 Java 服务；按每轮 prompt 透传当前用户登录身份，不将令牌写入模型上下文或会话数据库，权限沿用 `stock:analyzer:analyze`。名称提问先搜索，只有唯一精确匹配才自动分析，否则让用户确认候选。
+- 520 战法技能：`agent-gateway/backend/skills/stock-520/SKILL.md`，负责三步分析流程与证据解读，数值和规则判定仍由 Java 引擎提供。首批仅提供公开行情和分析，不包含自选或持仓操作。
+- Agent 新会话默认使用 DeepSeek（`deepseek-v4-pro`），可通过网关 `AGENT_DEFAULT_MODEL` 指定 `deepseek` Provider 下的已配置型号；认证使用网关 `DEEPSEEK_API_KEY` 或 Agent 设置页，不自动读取 Java 股票分析服务的 Key。

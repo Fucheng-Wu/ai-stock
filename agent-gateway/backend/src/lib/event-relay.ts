@@ -35,17 +35,35 @@ export function attachEventRelay(
   sendSnapshot?: () => void,
   persist?: () => void,
 ): void {
+  let hasText = false;
+  let hasThinking = false;
+  let textBoundary = false;
+  let thinkingBoundary = false;
   active.unsubscribe = active.session.subscribe((event: AgentSessionEvent) => {
     try {
       switch (event.type) {
         case "agent_start":
+          hasText = false;
+          hasThinking = false;
+          textBoundary = false;
+          thinkingBoundary = false;
           send({ type: "agent_start", sessionId: active.id });
           break;
+        case "message_start":
+          if (event.message.role === "assistant") {
+            textBoundary = hasText;
+            thinkingBoundary = hasThinking;
+          }
+          break;
         case "message_update":
-          if (event.assistantMessageEvent.type === "text_delta") {
-            send({ type: "text_delta", sessionId: active.id, delta: event.assistantMessageEvent.delta });
-          } else if (event.assistantMessageEvent.type === "thinking_delta") {
-            send({ type: "thinking_delta", sessionId: active.id, delta: event.assistantMessageEvent.delta });
+          if (event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) {
+            send({ type: "text_delta", sessionId: active.id, delta: `${textBoundary ? "\n\n" : ""}${event.assistantMessageEvent.delta}` });
+            textBoundary = false;
+            hasText = true;
+          } else if (event.assistantMessageEvent.type === "thinking_delta" && event.assistantMessageEvent.delta) {
+            send({ type: "thinking_delta", sessionId: active.id, delta: `${thinkingBoundary ? "\n\n" : ""}${event.assistantMessageEvent.delta}` });
+            thinkingBoundary = false;
+            hasThinking = true;
           }
           break;
         case "tool_execution_start":
@@ -80,6 +98,10 @@ export function attachEventRelay(
         case "message_end": {
           const message = finishedMessage(active, event.message);
           if (!message) break;
+          if (message.role === "assistant") {
+            hasText = Boolean(message.text);
+            hasThinking = Boolean(message.thinking);
+          }
           send({ type: "message_end", sessionId: active.id, message });
           if (message.role === "user" && active.summary.title === "新对话") {
             const title = titleFromMessages([message]);

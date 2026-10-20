@@ -38,3 +38,18 @@ test("combines tool calls and the final answer into one assistant turn", () => {
     timestamp: new Date(2).toISOString(),
   });
 });
+
+test("keeps Markdown paragraph boundaries between model outputs and separates user turns", () => {
+  const messages = convertMessages([
+    { role: "user", content: "分析股票", timestamp: 1 },
+    { role: "assistant", content: [{ type: "text", text: "搜索完成，开始分析。" }, { type: "thinking", thinking: "先查询" }], timestamp: 2 },
+    { role: "assistant", content: [{ type: "text", text: "# 分析报告\n\n趋势向下" }, { type: "thinking", thinking: "再分析" }], timestamp: 3 },
+    { role: "user", content: "再看另一只", timestamp: 4 },
+    { role: "assistant", content: [{ type: "text", text: "下一份报告" }], timestamp: 5 },
+  ]);
+
+  assert.equal(messages.length, 4);
+  assert.equal(messages[1].text, "搜索完成，开始分析。\n\n# 分析报告\n\n趋势向下");
+  assert.equal(messages[1].thinking, "先查询\n\n再分析");
+  assert.equal(messages[3].text, "下一份报告");
+});

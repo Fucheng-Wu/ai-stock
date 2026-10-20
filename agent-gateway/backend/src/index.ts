@@ -20,6 +20,7 @@ import {
 } from "./lib/session-factory.js";
 import { SessionPool } from "./lib/session-pool.js";
 import { createSharedResources } from "./lib/shared-resources.js";
+import { runWithStockToolToken } from "./lib/stock-tools.js";
 import type { ActiveSession, PersistedSessionRecord } from "./lib/types.js";
 
 loadGatewayEnvironment();
@@ -240,9 +241,9 @@ function lastPromptError(active: ActiveSession): string | undefined {
     : undefined;
 }
 
-function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string): void {
+function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string): void {
   if (active.promptTask || active.session.isStreaming) throw new Error("此会话正在回复，请等待或先取消");
-  const task = active.session.prompt(text)
+  const task = runWithStockToolToken(stockAccessToken, () => active.session.prompt(text))
     .then(() => {
       active.contextUsage = contextUsageFromSession(active.session);
       broadcastEvent({
@@ -340,8 +341,11 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       return;
     case "prompt": {
       const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      const stockAccessToken = message.stockAccessToken === undefined
+        ? undefined
+        : requireText(message.stockAccessToken, "stockAccessToken", 8192);
       await persistSession(active);
-      startPrompt(ws, active, requireText(message.text, "text"), requestId);
+      startPrompt(ws, active, requireText(message.text, "text"), requestId, stockAccessToken);
       return;
     }
     case "abort": {

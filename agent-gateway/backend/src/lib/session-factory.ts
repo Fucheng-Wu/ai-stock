@@ -19,6 +19,12 @@ export async function listStoredSessions(resources: SharedResources): Promise<Se
 }
 
 export async function createSession(resources: SharedResources): Promise<ActiveSession> {
+  // 新会话固定使用系统的 DeepSeek 默认值，不受其他 Pi 会话保存的 Provider 默认值影响。
+  const modelId = process.env.AGENT_DEFAULT_MODEL?.trim() || "deepseek-v4-pro";
+  const model = resources.modelRegistry.find("deepseek", modelId);
+  if (!model) {
+    throw new Error(`默认模型 deepseek/${modelId} 不存在，请在模型设置中配置，或调整 AGENT_DEFAULT_MODEL。`);
+  }
   const manager = SessionManager.create(resources.cwd, sessionDir(resources));
   const resourceLoader = await resources.features.createResourceLoader();
   const { session } = await createAgentSession({
@@ -28,6 +34,7 @@ export async function createSession(resources: SharedResources): Promise<ActiveS
     modelRuntime: resources.modelRuntime,
     settingsManager: resources.settingsManager,
     resourceLoader,
+    model,
   });
   const now = new Date().toISOString();
   return {

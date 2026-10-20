@@ -19,6 +19,8 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createStockToolsExtension } from "./stock-tools.js";
+import { AGENT_RESPONSE_FORMAT } from "./response-format.js";
 import type {
   FeatureSettings,
   McpConfigInfo,
@@ -188,7 +190,7 @@ export class FeatureManager {
       cwd,
       agentDir,
       settingsManager,
-      builtinExtensions: ["codemode", "tool-search", "mcp", "subagents"],
+      builtinExtensions: ["codemode", "tool-search", "mcp", "subagents", "stock-tools"],
     });
   }
 
@@ -459,6 +461,7 @@ export class FeatureManager {
       { name: "tool-search", factory: createToolSearchExtension(), replaceable: true, builtin: true },
       { name: "mcp", factory: createMcpExtension(), replaceable: true, builtin: true },
       { name: "subagents", factory: this.createSubagentExtension(), replaceable: true, builtin: true },
+      { name: "stock-tools", factory: createStockToolsExtension(), replaceable: true, builtin: true },
     ];
   }
 
@@ -469,6 +472,7 @@ export class FeatureManager {
       settingsManager: this.settingsManager,
       additionalSkillPaths: [this.projectSkillsDir],
       extensionFactories: this.extensionFactories(),
+      appendSystemPrompt: [AGENT_RESPONSE_FORMAT],
     });
     await loader.reload();
     return loader;
