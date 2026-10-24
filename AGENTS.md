@@ -109,6 +109,9 @@ deepseek:
 - 生产部署：nginx 反代与安全注意事项见 `docs/agent-chat-deployment.md`。
 - 菜单 SQL：`sql/agent_chat_menu.sql`（菜单 2018，order=8），默认只授权角色 1、4。
 - 权限标识：`agent:chat:use`。
-- 股票业务工具：`agent-gateway/backend/src/lib/stock-tools.ts` 注册 `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，通过 `STOCK_API_BASE_URL` 复用 Java 服务；按每轮 prompt 透传当前用户登录身份，不将令牌写入模型上下文或会话数据库，权限沿用 `stock:analyzer:analyze`。名称提问先搜索，只有唯一精确匹配才自动分析，否则让用户确认候选。
-- 520 战法技能：`agent-gateway/backend/skills/stock-520/SKILL.md`，负责三步分析流程与证据解读，数值和规则判定仍由 Java 引擎提供。首批仅提供公开行情和分析，不包含自选或持仓操作。
+- 主 Agent 固定为 `general`（普通 Agent），唯一工具为 `Agent`，且只能调用 `stock-analyst` 股票子代理；股票问题必须委派，其他问题可正常文字回答。旧会话和 MySQL 恢复也统一使用受限角色，不提供 Build/Plan 或全局自定义角色。
+- 工具限制：`agent-gateway/backend/src/lib/agent-policy.ts` 定义精确白名单，`permissions.ts` 在执行时再次检查。两层代理均禁止内部文件/目录/代码查询、写入、编辑、终端、执行代码和 MCP；不自动加载全局扩展、技能、提示模板或项目上下文。角色文件不能扩大权限，子代理不能递归委派。
+- 股票子代理：`agent-gateway/backend/subagents/stock-analyst/agent.md`，专属回答股票、ETF、证券知识和财经资讯。同目录的 `tools.ts` 为其注册 `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，通过 `STOCK_API_BASE_URL` 复用 Java 服务；按每轮 prompt 透传当前用户登录身份，不将令牌写入模型上下文或会话数据库，权限沿用 `stock:analyzer:analyze`。名称提问先搜索，只有唯一精确匹配才自动分析，否则让用户确认候选。
+- 股票技能：`agent-gateway/backend/skills/stock-520/SKILL.md` 负责三步分析流程与证据解读，数值和规则判定仍由 Java 引擎提供；`stock-research/SKILL.md` 负责公开资讯检索与来源引用。服务端直接注入指定技能正文，无需开放 `read`。仅提供公开行情和分析，不包含自选或持仓操作。
+- 联网搜索：`agent-gateway/backend/subagents/stock-analyst/web-search.ts` 为股票子代理提供 `web_search`，使用 Tavily 固定接口，服务端配置 `TAVILY_API_KEY`；未配置时仅搜索不可用，不影响股票业务工具。
 - Agent 新会话默认使用 DeepSeek（`deepseek-v4-pro`），可通过网关 `AGENT_DEFAULT_MODEL` 指定 `deepseek` Provider 下的已配置型号；认证使用网关 `DEEPSEEK_API_KEY` 或 Agent 设置页，不自动读取 Java 股票分析服务的 Key。

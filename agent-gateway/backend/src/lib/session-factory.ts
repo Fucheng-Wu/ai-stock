@@ -5,8 +5,51 @@ import type { ThinkingLevel } from "../../../shared/types.js";
 import { contextUsageFromSession } from "./message-converter.js";
 import type { SharedResources } from "./shared-resources.js";
 import type { ActiveSession, PersistedSessionRecord } from "./types.js";
+import type { RoleRuntime } from "./permissions.js";
+import { GENERAL_PRIMARY_ID, PRIMARY_TOOLS } from "./agent-policy.js";
 
 type PersistableMessage = Parameters<SessionManager["appendMessage"]>[0];
+
+async function buildSession(resources: SharedResources, manager: SessionManager, useDefaultModel = false) {
+  // Always migrate legacy sessions to the restricted role, including MySQL JSONL recovery.
+  const role: RoleRuntime = {
+    sessionId: manager.getSessionId(),
+    profile: await resources.primaryAgents.get(GENERAL_PRIMARY_ID),
+    controller: new AbortController(),
+  };
+  const modelId = process.env.AGENT_DEFAULT_MODEL?.trim() || "deepseek-v4-pro";
+  const model = useDefaultModel ? resources.modelRegistry.find("deepseek", modelId) : undefined;
+  if (useDefaultModel && !model) throw new Error(`默认模型 deepseek/${modelId} 不存在，请在模型设置中配置，或调整 AGENT_DEFAULT_MODEL。`);
+  const resourceLoader = await resources.features.createResourceLoader(role);
+  const { session } = await createAgentSession({
+    cwd: resources.cwd, agentDir: resources.agentDir, sessionManager: manager,
+    modelRuntime: resources.modelRuntime, settingsManager: resources.settingsManager,
+    resourceLoader, tools: [...PRIMARY_TOOLS], ...(model ? { model } : {}),
+  });
+  try {
+    await session.bindExtensions({});
+    manager.appendCustomEntry("primary-agent", { profileId: GENERAL_PRIMARY_ID });
+  } catch (error) {
+    session.dispose();
+    throw error;
+  }
+  return {
+    session, role,
+    onDispose: () => resources.permissions.cancelSession(session.sessionId, "会话已关闭", true),
+  };
+}
+
+export function runSessionOperation<T>(active: ActiveSession, operation: () => Promise<T>): Promise<T> {
+  if (active.operationTask || active.promptTask || !active.session.isIdle) throw new Error("会话正在工作，请等待完成或先取消");
+  const task = operation();
+  active.operationTask = task;
+  return task.finally(() => { if (active.operationTask === task) active.operationTask = undefined; });
+}
+
+export async function switchPrimaryAgent(resources: SharedResources, _active: ActiveSession, agentId: string): Promise<void> {
+  // Protocol-compatible with upstream, but no role can lift this workbench's restrictions.
+  await resources.primaryAgents.get(agentId);
+}
 
 export function sessionDir(resources: SharedResources): string {
   // Matches Pi's getDefaultSessionDir encoding, while respecting PI_AGENT_DIR.
@@ -19,27 +62,13 @@ export async function listStoredSessions(resources: SharedResources): Promise<Se
 }
 
 export async function createSession(resources: SharedResources): Promise<ActiveSession> {
-  // 新会话固定使用系统的 DeepSeek 默认值，不受其他 Pi 会话保存的 Provider 默认值影响。
-  const modelId = process.env.AGENT_DEFAULT_MODEL?.trim() || "deepseek-v4-pro";
-  const model = resources.modelRegistry.find("deepseek", modelId);
-  if (!model) {
-    throw new Error(`默认模型 deepseek/${modelId} 不存在，请在模型设置中配置，或调整 AGENT_DEFAULT_MODEL。`);
-  }
   const manager = SessionManager.create(resources.cwd, sessionDir(resources));
-  const resourceLoader = await resources.features.createResourceLoader();
-  const { session } = await createAgentSession({
-    cwd: resources.cwd,
-    agentDir: resources.agentDir,
-    sessionManager: manager,
-    modelRuntime: resources.modelRuntime,
-    settingsManager: resources.settingsManager,
-    resourceLoader,
-    model,
-  });
+  const built = await buildSession(resources, manager, true);
+  const { session } = built;
   const now = new Date().toISOString();
   return {
     id: session.sessionId,
-    session,
+    ...built,
     manager,
     summary: { id: session.sessionId, title: "新对话", createdAt: now, updatedAt: now, messageCount: 0 },
     contextUsage: contextUsageFromSession(session),
@@ -49,18 +78,11 @@ export async function createSession(resources: SharedResources): Promise<ActiveS
 
 export async function resumeSession(resources: SharedResources, info: SessionInfo): Promise<ActiveSession> {
   const manager = SessionManager.open(info.path, sessionDir(resources), resources.cwd);
-  const resourceLoader = await resources.features.createResourceLoader();
-  const { session } = await createAgentSession({
-    cwd: resources.cwd,
-    agentDir: resources.agentDir,
-    sessionManager: manager,
-    modelRuntime: resources.modelRuntime,
-    settingsManager: resources.settingsManager,
-    resourceLoader,
-  });
+  const built = await buildSession(resources, manager);
+  const { session } = built;
   return {
     id: session.sessionId,
-    session,
+    ...built,
     manager,
     summary: {
       id: session.sessionId,
@@ -127,18 +149,11 @@ export async function resumeSessionFromDatabase(
     }
   }
 
-  const resourceLoader = await resources.features.createResourceLoader();
-  const { session } = await createAgentSession({
-    cwd: resources.cwd,
-    agentDir: resources.agentDir,
-    sessionManager: manager,
-    modelRuntime: resources.modelRuntime,
-    settingsManager: resources.settingsManager,
-    resourceLoader,
-  });
+  const built = await buildSession(resources, manager);
+  const { session } = built;
   return {
     id: session.sessionId,
-    session,
+    ...built,
     manager,
     summary: { ...record.summary },
     contextUsage: record.contextUsage || contextUsageFromSession(session),

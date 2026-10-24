@@ -1,5 +1,6 @@
 import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ContextUsage, SessionSummary, ThinkingLevel } from "../../../shared/types.js";
+import type { RoleRuntime } from "./permissions.js";
 
 export interface ActiveSession {
   id: string;
@@ -10,6 +11,9 @@ export interface ActiveSession {
   lastAccessAt: number;
   unsubscribe?: () => void;
   promptTask?: Promise<void>;
+  operationTask?: Promise<unknown>;
+  role: RoleRuntime;
+  onDispose?: () => void;
 }
 
 export interface PersistedSessionRecord {

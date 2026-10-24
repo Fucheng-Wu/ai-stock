@@ -1,6 +1,7 @@
 import { readFile, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { WebSocket, WebSocketServer } from "ws";
@@ -17,10 +18,12 @@ import {
   resumeSession,
   resumeSessionFromDatabase,
   sessionDir,
+  runSessionOperation,
+  switchPrimaryAgent,
 } from "./lib/session-factory.js";
 import { SessionPool } from "./lib/session-pool.js";
 import { createSharedResources } from "./lib/shared-resources.js";
-import { runWithStockToolToken } from "./lib/stock-tools.js";
+import { runWithStockToolToken } from "../subagents/stock-analyst/tools.js";
 import type { ActiveSession, PersistedSessionRecord } from "./lib/types.js";
 
 loadGatewayEnvironment();
@@ -39,6 +42,10 @@ const initializedClients = new WeakSet<WebSocket>();
 const pendingLoads = new Map<string, Promise<ActiveSession>>();
 const pendingPersistence = new Map<string, Promise<void>>();
 const deletedSessionIds = new Set<string>();
+const clientIds = new WeakMap<WebSocket, string>();
+resources.permissions.setNotifier((owner, message) => {
+  for (const ws of clients) if (clientIds.get(ws) === owner && initializedClients.has(ws)) send(ws, message);
+});
 
 function send(ws: WebSocket, message: ServerMessage): void {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
@@ -62,8 +69,8 @@ function notifyCatalogChanged(): void {
 async function reloadIdleSessions(): Promise<void> {
   const results = await Promise.allSettled(
     pool.values()
-      .filter((active) => active.session.isIdle && !active.promptTask)
-      .map((active) => active.session.reload()),
+      .filter((active) => active.session.isIdle && !active.promptTask && !active.operationTask)
+      .map((active) => runSessionOperation(active, () => active.session.reload())),
   );
   for (const result of results) {
     if (result.status === "rejected") console.error("Failed to reload session resources", result.reason);
@@ -169,6 +176,7 @@ function snapshot(active: ActiveSession): SessionSnapshot {
     thinkingLevel: active.session.thinkingLevel as ThinkingLevel,
     isStreaming: active.session.isStreaming || !!active.promptTask,
     contextUsage: contextUsageFromSession(active.session),
+    primaryAgentId: active.role.profile.id,
   };
 }
 
@@ -242,8 +250,10 @@ function lastPromptError(active: ActiveSession): string | undefined {
 }
 
 function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string): void {
-  if (active.promptTask || active.session.isStreaming) throw new Error("此会话正在回复，请等待或先取消");
-  const task = runWithStockToolToken(stockAccessToken, () => active.session.prompt(text))
+  if (active.promptTask || active.operationTask || !active.session.isIdle) throw new Error("此会话正在工作，请等待或先取消");
+  active.role.controller = new AbortController();
+  resources.permissions.setOwner(active.id, clientIds.get(ws)!);
+  const task = runWithStockToolToken(stockAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false }))
     .then(() => {
       active.contextUsage = contextUsageFromSession(active.session);
       broadcastEvent({
@@ -258,6 +268,7 @@ function startPrompt(ws: WebSocket, active: ActiveSession, text: string, request
       });
     })
     .finally(() => {
+      resources.permissions.cancelSession(active.id, "本轮任务已结束");
       active.promptTask = undefined;
       active.summary.updatedAt = new Date().toISOString();
       active.summary.messageCount = active.session.messages.length;
@@ -279,7 +290,10 @@ async function deleteSession(sessionId: string): Promise<void> {
   const record = await sessionStore.get(workspace, sessionId);
   const info = (await listStoredSessions(resources)).find((item) => item.id === sessionId);
   const active = pool.get(sessionId);
+  await active?.operationTask;
   if (!info && !active && !record) throw new Error("会话不存在");
+  active?.role.controller.abort();
+  resources.permissions.cancelSession(sessionId);
   if (active?.session.isStreaming) await active.session.abort();
   await active?.promptTask;
   const pending = pendingPersistence.get(sessionId);
@@ -309,7 +323,7 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       if (message.protocolVersion !== PROTOCOL_VERSION) {
         throw new Error(`协议版本不兼容：客户端 ${message.protocolVersion}，服务端 ${PROTOCOL_VERSION}`);
       }
-      const [sessions, settings] = await Promise.all([listSessions(), resources.features.getSettings()]);
+      const [sessions, settings, primaryAgents] = await Promise.all([listSessions(), resources.features.getSettings(), resources.primaryAgents.list()]);
       send(ws, {
         type: "init",
         protocolVersion: PROTOCOL_VERSION,
@@ -317,9 +331,11 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
         models: models.getModelsInfo(),
         providers: models.getProvidersInfo(),
         settings,
+        primaryAgents,
         requestId,
       });
       initializedClients.add(ws);
+      for (const permission of resources.permissions.list(clientIds.get(ws)!)) send(ws, { type: "permission_request", permission });
       return;
     }
     case "ping": send(ws, { type: "pong", requestId }); return;
@@ -329,6 +345,24 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       await persistSession(active);
       send(ws, { type: "session_created", session: snapshot(active), requestId });
       broadcast({ type: "sessions", sessions: await listSessions() });
+      return;
+    }
+    case "list_primary_agents":
+      send(ws, { type: "primary_agents", agents: await resources.primaryAgents.list(), requestId });
+      return;
+    case "set_primary_agent": {
+      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      await runSessionOperation(active, async () => {
+        await switchPrimaryAgent(resources, active, requireText(message.agentId, "agentId", 64));
+        await persistSession(active);
+        broadcastEvent({ type: "session_updated", sessionId: active.id, primaryAgentId: active.role.profile.id });
+        send(ws, { type: "session_state", session: snapshot(active), requestId });
+      });
+      return;
+    }
+    case "permission_response": {
+      if (!["allow_once", "allow_session", "deny"].includes(message.decision)) throw new Error("权限决定无效");
+      resources.permissions.respond(clientIds.get(ws)!, requireText(message.permissionId, "permissionId", 128), message.decision);
       return;
     }
     case "load_session": {
@@ -350,7 +384,10 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
     }
     case "abort": {
       const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      active.role.controller.abort();
+      resources.permissions.cancelSession(active.id);
       await active.session.abort();
+      await active.promptTask;
       await persistSession(active);
       return;
     }
@@ -361,8 +398,10 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       const model = resources.modelRegistry.find(provider, modelId);
       if (!model) throw new Error("模型不存在");
       if (!resources.modelRegistry.hasConfiguredAuth(model)) throw new Error("请先配置此模型的 Provider 认证");
-      await active.session.setModel(model);
-      await persistSession(active);
+      await runSessionOperation(active, async () => {
+        await active.session.setModel(model);
+        await persistSession(active);
+      });
       broadcastEvent({
         type: "session_updated", sessionId: active.id, model: { provider, id: modelId }, thinkingLevel: active.session.thinkingLevel as ThinkingLevel,
       });
@@ -372,8 +411,10 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       const active = await getSession(requireText(message.sessionId, "sessionId", 128));
       const allowed: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
       if (!allowed.includes(message.level)) throw new Error("思考强度无效");
-      active.session.setThinkingLevel(message.level);
-      await persistSession(active);
+      await runSessionOperation(active, async () => {
+        active.session.setThinkingLevel(message.level);
+        await persistSession(active);
+      });
       broadcastEvent({
         type: "session_updated", sessionId: active.id, thinkingLevel: active.session.thinkingLevel as ThinkingLevel,
       });
@@ -519,6 +560,7 @@ server.on("upgrade", (request, socket, head) => {
 
 wss.on("connection", (ws) => {
   clients.add(ws);
+  clientIds.set(ws, randomUUID());
   const auth = new WsAuthInteraction(resources, (message) => send(ws, message), notifyCatalogChanged);
   ws.on("message", (data) => {
     let message: ClientMessage;
@@ -546,7 +588,7 @@ wss.on("connection", (ws) => {
       });
     });
   });
-  ws.on("close", () => { clients.delete(ws); auth.close(); });
+  ws.on("close", () => { resources.permissions.closeOwner(clientIds.get(ws)!); clients.delete(ws); auth.close(); });
   ws.on("error", (error) => console.error("WebSocket error", error));
 });
 
@@ -556,6 +598,9 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   for (const client of clients) client.close(1001, "Server shutting down");
   for (const active of pool.values()) {
+    active.role.controller.abort();
+    resources.permissions.cancelSession(active.id);
+    await active.operationTask?.catch(() => undefined);
     if (active.session.isStreaming) await active.session.abort().catch(() => undefined);
     await active.promptTask?.catch(() => undefined);
     await persistSession(active).catch((error) => console.error(`Final persistence failed for ${active.id}`, error));

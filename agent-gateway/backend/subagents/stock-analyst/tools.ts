@@ -118,7 +118,7 @@ export function createStockToolsExtension(): ExtensionFactory {
       label: "股票实时行情",
       description: "查询单只沪深股票、场内ETF或带市场前缀指数的最新报价、涨跌幅、成交量额和行情时间；不计算均线。停盘期间返回最近报价。",
       promptSnippet: "查询沪深股票或 ETF 的最新行情",
-      promptGuidelines: ["行情回答注明来源及行情时间，fetchedAt 只是查询时间；520 战法分析先读取 stock-520 SKILL.md。"],
+      promptGuidelines: ["行情回答注明来源及行情时间，fetchedAt 只是查询时间；520 战法分析遵循系统提示中已加载的 stock-520 技能，不调用文件读取工具。"],
       executionMode: "parallel",
       parameters: Type.Object({ stockCode: stockCodeParameter }),
       execute: async (_id, params, signal) => {

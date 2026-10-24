@@ -1,8 +1,10 @@
 # Orange Workbench Agent Gateway
 
 当前后端以上游 `pi-agent-gateway` 的 `main` 分支提交
-`124d7a68b3a587361cf4d415bf1e8cd6af600682` 为基线，并在其上保留工作台所需的
-MySQL 会话持久化扩展。详细同步说明见 `UPSTREAM.md`。
+`94d9d752f2ada9145454e967c1721cfe68bf685e` 为基线，接入主代理角色、工具权限、
+会话操作互斥、实时思考面板及按范围记忆的会话授权，并保留工作台的 MySQL 会话持久化、
+登录身份透传和股票分析扩展。
+详细同步说明见 `UPSTREAM.md`。
 
 这是 `orange的工作台` 内置的 Agent 后端，代码来自原
 `pi-agent-gateway`，现已随 `ai-stock` 仓库统一维护。
@@ -73,9 +75,53 @@ Agent 会复用 `PI_AGENT_DIR` 下的：
 - `auth.json`：Provider 凭证；
 - `settings.json`：Pi 设置；
 - `sessions/`：Pi 运行时 JSONL；完整内容会同步备份到 MySQL；
-- `mcp.json`：MCP 服务。
+- `mcp.json`：保留配置管理能力；当前普通 Agent 和股票子代理不加载 MCP。
 
 项目专属技能和子 Agent 分别放在 `backend/skills` 与 `backend/subagents`。
+
+## 主 Agent 与股票子代理
+
+主 Agent 固定为 `general`（普通 Agent），可以正常文字对话，唯一工具是 `Agent`，且只能
+委派给 `stock-analyst`。所有股票问题由股票子代理处理。新版不会提供上游的 Build、Plan
+或全局自定义角色；旧会话和 MySQL 恢复的会话也统一使用此限制。
+
+股票子代理配置在 `backend/subagents/stock-analyst/agent.md`。
+
+工具实现同样归属该角色目录：`tools.ts` 提供股票业务工具和本轮身份透传，
+`web-search.ts` 提供联网搜索。`src/lib/feature-manager.ts` 创建子代理时显式导入并挂载，
+通用权限控制继续保留在 `src/lib`。
+
+工具固定为：
+
+- `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`：复用 Java 股票服务；
+- `web_search`：通过 Tavily 查询股票、公告、行业和财经公开资讯。
+
+两层代理均不提供文件、目录、代码检索、写入、编辑、终端、执行代码、MCP 等能力。
+工具可见性与执行权限双重限制；修改配置中的 tools、extensions 或 skills 不能扩大权限。
+全局扩展、技能、提示模板和项目 AGENTS.md 不会自动注入代理上下文。
+
+聊天页在生成思考内容时自动展开并跟随最新内容；向上滚动可暂停跟随，手动收起后不会因
+新增内容而展开。正文开始或本轮结束后自动收起，历史思考可手动展开。
+
+权限协议兼容上游的 `action` 和 `patterns`，前端按队列展示操作对象与本会话授权范围。
+本会话授权只在当前角色和会话内生效，可放行匹配的待确认操作；拒绝会取消该会话其余
+待确认请求。明确禁止的操作不会被已记忆授权放行。当前普通 Agent 和股票子代理的
+固定白名单仍优先生效，正常股票工具无需确认，内部操作直接拒绝。
+
+`stock-520` 和 `stock-research` 由服务端读取项目内指定文件，将正文直接注入股票子代理，
+因此无需给模型开放 `read`。主 Agent 不加载这些技能。子代理不继承聊天历史，主 Agent
+委派时应带上必要上下文；子代理不再递归委派。停止生成会一并取消子代理和在途请求。
+
+联网搜索配置（可选）：
+
+```dotenv
+TAVILY_API_KEY=填写服务端密钥
+```
+
+开发环境放在 `agent-gateway/.env`，生产环境放在 `config/agent-gateway.env`，修改后重启
+网关。未配置时联网工具返回明确提示，股票业务工具仍可使用。接口说明见
+[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)。
+不要在聊天中发送密钥。股票工具沿用每轮的工作台登录身份，不使用 Tavily 密钥访问 Java。
 
 ## 会话持久化
 

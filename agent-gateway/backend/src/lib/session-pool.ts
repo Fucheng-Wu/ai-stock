@@ -16,10 +16,12 @@ export class SessionPool {
     if (this.sessions.has(active.id)) return;
     if (this.sessions.size >= this.maxActive) {
       const candidate = [...this.sessions.values()]
-        .filter((item) => !item.session.isStreaming && !item.promptTask)
+        .filter((item) => item.session.isIdle && !item.promptTask && !item.operationTask)
         .sort((a, b) => a.lastAccessAt - b.lastAccessAt)[0];
       if (!candidate) {
         active.unsubscribe?.();
+        active.role.controller.abort();
+        active.onDispose?.();
         active.session.dispose();
         throw new Error(`同时最多可运行 ${this.maxActive} 个会话，请等待一个对话完成`);
       }
@@ -34,6 +36,8 @@ export class SessionPool {
     if (!active) return undefined;
     this.sessions.delete(id);
     active.unsubscribe?.();
+    active.role.controller.abort();
+    active.onDispose?.();
     active.session.dispose();
     return active;
   }
@@ -46,4 +50,3 @@ export class SessionPool {
     for (const id of this.sessions.keys()) this.remove(id);
   }
 }
-

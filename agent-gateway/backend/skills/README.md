@@ -1,17 +1,18 @@
-# 项目技能
+# 股票技能
 
-这里的技能会由 `DefaultResourceLoader` 自动加载，并同时提供给主 agent。目录结构遵循 Agent Skills 规范：
+当前工作台仅将以下项目技能提供给 `stock-analyst` 股票子代理：
 
-```text
-backend/skills/
-└── my-skill/
-    ├── SKILL.md
-    ├── scripts/
-    ├── references/
-    └── assets/
-```
+- `stock-520/SKILL.md`：520 均线战法三步分析和规则证据解读；
+- `stock-research/SKILL.md`：股票公开资讯检索、时效判断和来源引用。
 
-复制 `_template/SKILL.md.example` 为 `my-skill/SKILL.md`，并保证目录名与 frontmatter 中的 `name` 相同。修改后，新会话立即生效；已有空闲会话可在设置页触发资源重载。
+网关在创建子代理时直接读取这两个文件，并将正文注入系统提示。
+模型不需要也不允许使用文件读取工具加载技能。普通 Agent 不加载这些技能。
+不会自动加载全局技能、包内技能、其他项目技能或项目 AGENTS.md。
 
-子 agent 默认不继承全部技能。请在 `backend/subagents/<id>/agent.md` 的 `skills` 中列出技能名，或使用 `skills: ["*"]`。
+技能目录遵循 Agent Skills 格式，frontmatter 包含 `name` 和 `description`。
+`disable-model-invocation: true` 可以停用正文注入。文件修改在下一次子代理调用时生效；
+不会改变已经运行中的子代理。缺失必需文件会明确报错，不退回全局同名技能。
 
+新增技能目录或在角色文件中设置 `skills: ["*"]` 都不会扩大运行时范围；
+如要扩展股票能力，需由开发者修改 `src/lib/agent-policy.ts` 的明确列表。
+模板只用于格式参考，不会自动加载到模型会话。

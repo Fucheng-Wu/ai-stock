@@ -75,8 +75,7 @@
         </button>
         <div class="agent-topbar__title">
           <strong>{{ activeTitle }}</strong>
-          <span v-if="activeModel">{{ activeModel }}</span>
-          <span v-else>专属 Agent</span>
+          <span>普通 Agent<span v-if="activeModel"> · {{ activeModel }}</span></span>
         </div>
         <div class="agent-topbar__status" :class="{ 'is-online': isConnected }">
           <span />
@@ -99,7 +98,7 @@
         <div v-else-if="!activeState || !activeState.messages.length" class="agent-welcome">
           <div class="agent-welcome__mark">✦</div>
           <h1>今天想聊点什么？</h1>
-          <p>这是你的专属 Agent。可以直接提问、整理思路，或让它帮你完成一项工作。</p>
+          <p>可以正常聊天，股票问题会交给专属子 Agent，查询行情、解读 520 战法和研究公开资讯。</p>
           <div class="agent-suggestions">
             <button v-for="suggestion in suggestions" :key="suggestion.title" type="button" @click="useSuggestion(suggestion.prompt)">
               <span class="agent-suggestions__icon"><i :class="suggestion.icon" /></span>
@@ -131,18 +130,12 @@
                 <span v-if="isMessageStreaming(message)" class="agent-typing-dot" />
               </div>
 
-              <div
+              <agent-thinking-panel
                 v-if="message.thinking"
-                class="agent-thinking"
-                :class="{ 'is-open': isThinkingOpen(message) }"
-              >
-                <button type="button" @click="toggleThinking(message)">
-                  <i class="el-icon-cpu" />
-                  <span>{{ isMessageStreaming(message) && !message.text ? '正在思考' : '思考过程' }}</span>
-                  <i :class="isThinkingOpen(message) ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
-                </button>
-                <div v-if="isThinkingOpen(message)" class="agent-thinking__content">{{ message.thinking }}</div>
-              </div>
+                :text="message.thinking"
+                :streaming="isMessageStreaming(message) && !message.text"
+                @layout="handleRichContentLayout"
+              />
 
               <div
                 v-for="tool in (message.tools || [])"
@@ -241,6 +234,15 @@
         </div>
       </footer>
     </main>
+    <agent-permission-dialog
+      v-if="pendingPermission"
+      :key="pendingPermission.id"
+      :request="pendingPermission"
+      :busy="permissionRespondingId === pendingPermission.id"
+      :remaining="permissionRequests.length"
+      :session-title="permissionSessionTitle"
+      @decide="respondPermission"
+    />
   </div>
 </template>
 
@@ -248,6 +250,8 @@
 import { AGENT_PROTOCOL_VERSION, getAgentWebSocketUrl } from '@/utils/agentSocket'
 import { getToken } from '@/utils/auth'
 import AgentMarkdown from './components/AgentMarkdown.vue'
+import AgentThinkingPanel from './components/AgentThinkingPanel.vue'
+import AgentPermissionDialog from './components/AgentPermissionDialog.vue'
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -255,7 +259,7 @@ function createId(prefix) {
 
 export default {
   name: 'AgentChat',
-  components: { AgentMarkdown },
+  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog },
   data() {
     return {
       socketClient: null,
@@ -275,19 +279,28 @@ export default {
       composerFocused: false,
       mobileSidebarOpen: false,
       copiedMessageId: '',
-      expandedThinking: {},
+      permissionRequests: [],
+      permissionRespondingId: '',
+      permissionResponseRequestId: '',
       expandedTools: {},
       userPinnedScroll: false,
       endpointLabel: '/agent-ws',
       suggestions: [
-        { title: '帮我理清思路', description: '把一个复杂问题拆成清晰步骤', prompt: '帮我梳理一下现在最值得优先处理的事情，并给出清晰的行动步骤。', icon: 'el-icon-guide' },
-        { title: '分析一段内容', description: '提炼重点、风险与下一步', prompt: '我接下来会发一段内容，请帮我提炼重点、潜在风险和下一步行动。', icon: 'el-icon-document' },
-        { title: '完成一项任务', description: '告诉 Agent 目标和约束', prompt: '我有一项任务想请你协助完成。请先帮我明确目标、约束和交付结果。', icon: 'el-icon-magic-stick' },
-        { title: '一起探索想法', description: '从模糊灵感开始讨论', prompt: '我有一个还不成熟的想法，想和你一起探索它的可能性。', icon: 'el-icon-s-opportunity' }
+        { title: '查询最新行情', description: '查看报价、涨跌幅和行情时间', prompt: '请帮我查询 600519 的最新行情，并注明数据来源和行情时间。', icon: 'el-icon-data-line' },
+        { title: '520 战法分析', description: '按趋势、买点和执行解读证据', prompt: '请用 520 战法分析 510300，说明趋势、买点和判断依据。', icon: 'el-icon-data-analysis' },
+        { title: '研究股票资讯', description: '搜索公开新闻并提供来源链接', prompt: '请联网查询贵州茅台近期的公司公告和相关新闻，区分事实与推断，并附上来源链接和日期。', icon: 'el-icon-search' },
+        { title: '了解均线方法', description: '学习 MA5、MA20 与信号含义', prompt: '请解释 520 均线战法中 MA5 和 MA20 的作用，以及金叉、回踩和粘合买点有什么区别。', icon: 'el-icon-reading' }
       ]
     }
   },
   computed: {
+    pendingPermission() {
+      return this.permissionRequests[0] || null
+    },
+    permissionSessionTitle() {
+      const session = this.pendingPermission && this.sessions.find(item => item.id === this.pendingPermission.sessionId)
+      return session ? session.title : ''
+    },
     isConnected() {
       return this.connectionState === 'connected'
     },
@@ -391,6 +404,7 @@ export default {
         if (this.socketClient !== socket) return
         this.socketClient = null
         this.stopHeartbeat()
+        this.clearPermissions()
         if (this.componentDestroyed) return
         this.connectionState = 'reconnecting'
         const delay = Math.min(15000, 800 * Math.pow(2, Math.min(this.reconnectAttempts++, 5))) + Math.random() * 350
@@ -406,6 +420,7 @@ export default {
         this.socketClient.close()
         this.socketClient = null
       }
+      this.clearPermissions()
       this.reconnectAttempts = 0
       this.connectSocket()
     },
@@ -469,6 +484,18 @@ export default {
         case 'session_deleted':
           this.removeSessionLocally(message.sessionId)
           break
+        case 'permission_request':
+          if (message.permission && !this.permissionRequests.some(item => item.id === message.permission.id)) {
+            this.permissionRequests.push(message.permission)
+          }
+          break
+        case 'permission_resolved':
+          this.permissionRequests = this.permissionRequests.filter(item => item.id !== message.permissionId)
+          if (this.permissionRespondingId === message.permissionId) {
+            this.permissionRespondingId = ''
+            this.permissionResponseRequestId = ''
+          }
+          break
         case 'agent_start':
         case 'text_delta':
         case 'thinking_delta':
@@ -481,6 +508,10 @@ export default {
           this.applyAgentEvent(message)
           break
         case 'error':
+          if (message.requestId && message.requestId === this.permissionResponseRequestId) {
+            this.permissionRespondingId = ''
+            this.permissionResponseRequestId = ''
+          }
           this.creatingSession = false
           if (this.pendingPrompt) {
             this.inputText = this.pendingPrompt
@@ -518,7 +549,8 @@ export default {
         thinkingLevel: snapshot.thinkingLevel || 'medium',
         isStreaming: Boolean(snapshot.isStreaming),
         streamMessageId,
-        contextUsage: snapshot.contextUsage || null
+        contextUsage: snapshot.contextUsage || null,
+        primaryAgentId: snapshot.primaryAgentId || 'general'
       }
       this.$set(this.sessionStates, snapshot.summary.id, state)
       this.$delete(this.loadingSessionIds, snapshot.summary.id)
@@ -590,6 +622,7 @@ export default {
           if (event.model) state.model = event.model
           if (event.thinkingLevel) state.thinkingLevel = event.thinkingLevel
           if (event.contextUsage) state.contextUsage = event.contextUsage
+          if (event.primaryAgentId) state.primaryAgentId = event.primaryAgentId
           break
         default:
           break
@@ -738,11 +771,19 @@ export default {
     isMessageStreaming(message) {
       return Boolean(this.activeState && this.activeState.isStreaming && this.activeState.streamMessageId === message.id)
     },
-    isThinkingOpen(message) {
-      return Boolean(this.expandedThinking[message.id] || (this.isMessageStreaming(message) && !message.text))
+    clearPermissions() {
+      this.permissionRequests = []
+      this.permissionRespondingId = ''
+      this.permissionResponseRequestId = ''
     },
-    toggleThinking(message) {
-      this.$set(this.expandedThinking, message.id, !this.isThinkingOpen(message))
+    respondPermission(decision) {
+      const permission = this.pendingPermission
+      if (!permission || this.permissionRespondingId) return
+      const requestId = createId('permission')
+      if (this.sendSocket({ type: 'permission_response', permissionId: permission.id, decision, requestId })) {
+        this.permissionRespondingId = permission.id
+        this.permissionResponseRequestId = requestId
+      }
     },
     toggleTool(toolId) {
       this.$set(this.expandedTools, toolId, !this.expandedTools[toolId])
@@ -751,7 +792,9 @@ export default {
       const labels = {
         read: '读取文件', write: '写入文件', edit: '编辑文件', bash: '运行命令',
         grep: '搜索内容', find: '查找文件', ls: '浏览目录', web_search: '搜索网络',
-        web_fetch: '读取网页', subagent: '调用子 Agent'
+        web_fetch: '读取网页', subagent: '调用子 Agent', Agent: '股票分析子 Agent',
+        stock_search: '检索股票名称', stock_quote: '查询股票行情',
+        stock_kline: '查询日 K 线', stock_analyze: '520 战法分析'
       }
       return labels[name] || name || '调用工具'
     },
@@ -1470,39 +1513,6 @@ export default {
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.agent-thinking {
-  width: 100%;
-  margin: 0 0 9px;
-  border-left: 2px solid #e5e0da;
-
-  > button {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 5px 10px;
-    border: 0;
-    outline: none;
-    background: transparent;
-    color: #98938d;
-    font-size: 11px;
-    cursor: pointer;
-
-    i:last-child {
-      font-size: 9px;
-    }
-  }
-}
-
-.agent-thinking__content {
-  max-height: 260px;
-  overflow: auto;
-  padding: 4px 12px 9px;
-  color: #8a857f;
-  font-size: 11px;
-  line-height: 1.65;
   white-space: pre-wrap;
 }
 
