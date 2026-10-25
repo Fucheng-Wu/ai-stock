@@ -1,30 +1,32 @@
-import { readFile, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { WebSocket, WebSocketServer } from "ws";
-import { PROTOCOL_VERSION, type AgentUiEvent, type ClientMessage, type ServerMessage, type SessionSnapshot, type SessionSummary, type ThinkingLevel } from "../../shared/types.js";
+import { PROTOCOL_VERSION, type AgentUiEvent, type ClientMessage, type ServerMessage, type SessionSnapshot, type ThinkingLevel } from "../../shared/types.js";
+import { validateClientMessage } from "../../shared/validation.js";
 import { WsAuthInteraction } from "./lib/auth-bridge.js";
 import { loadGatewayEnvironment, MySqlSessionStore } from "./lib/database.js";
 import { attachEventRelay } from "./lib/event-relay.js";
-import { contextUsageFromSession, convertMessages } from "./lib/message-converter.js";
+import { contextUsageFromSession, convertActiveMessages, convertMessages } from "./lib/message-converter.js";
 import { ModelManager } from "./lib/model-manager.js";
 import {
   createSession,
-  listStoredSessions,
-  recordFromStoredSession,
-  resumeSession,
   resumeSessionFromDatabase,
   sessionDir,
   runSessionOperation,
   switchPrimaryAgent,
 } from "./lib/session-factory.js";
 import { SessionPool } from "./lib/session-pool.js";
+import { buildPersistedRecord } from "./lib/session-record.js";
 import { createSharedResources } from "./lib/shared-resources.js";
 import { runWithStockToolToken } from "../subagents/stock-analyst/tools.js";
-import type { ActiveSession, PersistedSessionRecord } from "./lib/types.js";
+import type { ActiveSession } from "./lib/types.js";
+import { authenticateWorkbench, requireCommandPermission, WorkbenchAuthError, WorkbenchServiceError, type WorkbenchIdentity } from "./lib/workbench-auth.js";
+import { historyPage } from "./lib/history-page.js";
+import { sendEncoded } from "./lib/transport.js";
 
 loadGatewayEnvironment();
 const workspace = resolve(process.env.PI_WORKSPACE_DIR || process.cwd());
@@ -39,26 +41,39 @@ const models = new ModelManager(resources);
 const pool = new SessionPool(5);
 const clients = new Set<WebSocket>();
 const initializedClients = new WeakSet<WebSocket>();
+const initializingClients = new WeakSet<WebSocket>();
+const identities = new WeakMap<WebSocket, WorkbenchIdentity>();
 const pendingLoads = new Map<string, Promise<ActiveSession>>();
 const pendingPersistence = new Map<string, Promise<void>>();
 const deletedSessionIds = new Set<string>();
 const clientIds = new WeakMap<WebSocket, string>();
+const authInteractions = new Set<WsAuthInteraction>();
+const activeRequests = new Set<Promise<void>>();
+const serverEpoch = randomUUID();
+let shuttingDown = false;
 resources.permissions.setNotifier((owner, message) => {
   for (const ws of clients) if (clientIds.get(ws) === owner && initializedClients.has(ws)) send(ws, message);
 });
 
 function send(ws: WebSocket, message: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+  sendEncoded(ws, JSON.stringify(message));
 }
 
-function broadcast(message: ServerMessage): void {
+function broadcast(message: ServerMessage, userId?: string): void {
+  const encoded = JSON.stringify(message);
   for (const ws of clients) {
-    if (initializedClients.has(ws)) send(ws, message);
+    const identity = identities.get(ws);
+    if (initializedClients.has(ws) && identity && identity.authorizedUntil > Date.now()
+        && (userId === undefined || identity.userId === userId)) sendEncoded(ws, encoded);
   }
 }
 
 function broadcastEvent(event: AgentUiEvent): void {
-  broadcast(event);
+  const active = pool.get(event.sessionId);
+  if (active) {
+    active.sequence = (active.sequence || 0) + 1;
+    broadcast({ ...event, epoch: active.epoch, sequence: active.sequence }, active.userId);
+  }
 }
 
 function notifyCatalogChanged(): void {
@@ -88,34 +103,11 @@ async function sendFeatureSettings(
   else if (category) send(ws, { type, category, settings, requestId });
 }
 
-async function buildPersistedRecord(active: ActiveSession): Promise<PersistedSessionRecord> {
-  const model = active.session.model;
-  const sessionPath = active.manager.getSessionFile();
-  let sessionJsonl: string | undefined;
-  if (sessionPath) {
-    try { sessionJsonl = await readFile(sessionPath, "utf8"); }
-    catch (error) { console.warn(`Failed to read session JSONL for ${active.id}`, error); }
-  }
-  return {
-    summary: {
-      ...active.summary,
-      messageCount: active.session.messages.length,
-    },
-    workspace,
-    sessionPath,
-    sessionJsonl,
-    rawMessages: [...active.session.messages],
-    model: model ? { provider: model.provider, id: model.id } : undefined,
-    thinkingLevel: active.session.thinkingLevel as ThinkingLevel,
-    contextUsage: active.contextUsage || contextUsageFromSession(active.session),
-  };
-}
-
 function persistSession(active: ActiveSession): Promise<void> {
   const previous = pendingPersistence.get(active.id) || Promise.resolve();
   const task = previous.catch(() => undefined).then(async () => {
     if (deletedSessionIds.has(active.id)) return;
-    await sessionStore.save(await buildPersistedRecord(active));
+    await sessionStore.save(buildPersistedRecord(active, workspace));
   });
   pendingPersistence.set(active.id, task);
   const cleanup = () => {
@@ -126,38 +118,48 @@ function persistSession(active: ActiveSession): Promise<void> {
 }
 
 function schedulePersistence(active: ActiveSession): void {
+  if (shuttingDown) return;
   void persistSession(active).catch((error) => {
     console.error(`Failed to persist Agent session ${active.id} to MySQL`, error);
   });
 }
 
 function attach(active: ActiveSession): ActiveSession {
+  if (shuttingDown) {
+    active.role.controller.abort();
+    active.onDispose?.();
+    active.session.dispose();
+    throw new Error("服务正在关闭，请稍后重新连接");
+  }
+  active.epoch = randomUUID();
+  active.sequence = 0;
   pool.add(active);
   attachEventRelay(
     active,
     broadcastEvent,
-    () => broadcast({ type: "session_state", session: snapshot(active) }),
+    () => broadcast({ type: "session_state", session: snapshot(active) }, active.userId),
     () => schedulePersistence(active),
   );
   return active;
 }
 
-async function getSession(sessionId: string): Promise<ActiveSession> {
+async function getSession(userId: string, sessionId: string): Promise<ActiveSession> {
   const loaded = pool.get(sessionId);
-  if (loaded) return loaded;
+  if (loaded) {
+    if (loaded.userId !== userId) throw new Error("会话不存在或无权访问");
+    return loaded;
+  }
   const pending = pendingLoads.get(sessionId);
-  if (pending) return pending;
+  if (pending) {
+    const active = await pending;
+    if (active.userId !== userId) throw new Error("会话不存在或无权访问");
+    return active;
+  }
   const task = (async () => {
-    const record = await sessionStore.get(workspace, sessionId);
-    const info = (await listStoredSessions(resources)).find((item) => item.id === sessionId);
-    if (!info && !record) throw new Error("会话不存在");
-    const active = info
-      ? await resumeSession(resources, info)
-      : await resumeSessionFromDatabase(resources, record!);
-    if (record) {
-      active.summary = { ...record.summary };
-      active.contextUsage = record.contextUsage || active.contextUsage;
-    }
+    const record = await sessionStore.get(workspace, userId, sessionId);
+    // No fallback to the shared legacy JSONL directory: it has no trustworthy owner.
+    if (!record) throw new Error("会话不存在或无权访问");
+    const active = await resumeSessionFromDatabase(resources, record);
     attach(active);
     schedulePersistence(active);
     return active;
@@ -167,46 +169,38 @@ async function getSession(sessionId: string): Promise<ActiveSession> {
   finally { pendingLoads.delete(sessionId); }
 }
 
-function snapshot(active: ActiveSession): SessionSnapshot {
+function snapshot(active: ActiveSession, before?: string): SessionSnapshot {
   const model = active.session.model;
   return {
     summary: active.summary,
-    messages: convertMessages(active.session.messages),
+    ...historyPage(convertActiveMessages(active), before),
     model: model ? { provider: model.provider, id: model.id } : undefined,
     thinkingLevel: active.session.thinkingLevel as ThinkingLevel,
     isStreaming: active.session.isStreaming || !!active.promptTask,
     contextUsage: contextUsageFromSession(active.session),
     primaryAgentId: active.role.profile.id,
+    phase: active.phase,
+    startedAt: active.startedAt,
+    epoch: active.epoch,
+    sequence: active.sequence,
   };
 }
 
-async function listSessions(): Promise<SessionSummary[]> {
-  const stored = await sessionStore.list(workspace);
-  const byId = new Map<string, SessionSummary>();
-  for (const item of stored) byId.set(item.id, item);
-  for (const active of pool.values()) byId.set(active.id, active.summary);
-  return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-async function migrateLocalSessionsToDatabase(): Promise<void> {
-  const [databaseSessions, localSessions] = await Promise.all([
-    sessionStore.list(workspace),
-    listStoredSessions(resources),
-  ]);
-  const databaseIds = new Set(databaseSessions.map((item) => item.id));
-  let imported = 0;
-  for (const info of localSessions) {
-    if (databaseIds.has(info.id)) continue;
-    let record: PersistedSessionRecord;
-    try { record = await recordFromStoredSession(resources, info); }
-    catch (error) {
-      console.warn(`Skipped unreadable local Agent session ${info.id}`, error);
-      continue;
-    }
-    await sessionStore.save(record);
-    imported += 1;
+async function loadHistory(userId: string, sessionId: string, before?: string): Promise<SessionSnapshot> {
+  const active = pool.get(sessionId);
+  if (active) {
+    if (active.userId !== userId) throw new Error("会话不存在或无权访问");
+    return snapshot(active, before);
   }
-  if (imported > 0) console.log(`Imported ${imported} local Agent session(s) into MySQL`);
+  // Reading history must not consume one of the live SDK session slots.
+  const record = await sessionStore.get(workspace, userId, sessionId, false);
+  if (!record) throw new Error("会话不存在或无权访问");
+  return {
+    summary: record.summary, ...historyPage(convertMessages(record.rawMessages), before),
+    model: record.model, thinkingLevel: record.thinkingLevel,
+    contextUsage: record.contextUsage, isStreaming: false, primaryAgentId: "general",
+    epoch: `stored:${serverEpoch}:${sessionId}`, sequence: 0,
+  };
 }
 
 function requireText(value: unknown, field: string, maxLength = 500_000): string {
@@ -232,14 +226,7 @@ function parseClientMessage(data: WebSocket.RawData): ClientMessage {
   let parsed: unknown;
   try { parsed = JSON.parse(data.toString()); }
   catch { throw new Error("消息不是有效 JSON"); }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || typeof (parsed as { type?: unknown }).type !== "string") {
-    throw new Error("消息缺少 type 字段");
-  }
-  const requestId = (parsed as { requestId?: unknown }).requestId;
-  if (requestId !== undefined && (typeof requestId !== "string" || requestId.length > 128)) {
-    throw new Error("requestId 无效");
-  }
-  return parsed as ClientMessage;
+  return validateClientMessage(parsed);
 }
 
 function lastPromptError(active: ActiveSession): string | undefined {
@@ -252,46 +239,50 @@ function lastPromptError(active: ActiveSession): string | undefined {
 function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string): void {
   if (active.promptTask || active.operationTask || !active.session.isIdle) throw new Error("此会话正在工作，请等待或先取消");
   active.role.controller = new AbortController();
+  active.startedAt = new Date().toISOString();
+  active.phase = "waiting";
   resources.permissions.setOwner(active.id, clientIds.get(ws)!);
-  const task = runWithStockToolToken(stockAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false }))
-    .then(() => {
-      active.contextUsage = contextUsageFromSession(active.session);
-      broadcastEvent({
-        type: "agent_end", sessionId: active.id, contextUsage: active.contextUsage, error: lastPromptError(active),
-      });
-    })
+  let accepted = false;
+  let promptError: string | undefined;
+  const task = (async () => {
+    await persistSession(active);
+    if (active.role.controller.signal.aborted) throw new Error("已取消发送");
+    accepted = true;
+    send(ws, { type: "prompt_accepted", sessionId: active.id, requestId });
+    await runWithStockToolToken(stockAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false }));
+    promptError = lastPromptError(active);
+  })()
     .catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      send(ws, { type: "error", message, sessionId: active.id, requestId });
-      broadcastEvent({
-        type: "agent_end", sessionId: active.id, contextUsage: contextUsageFromSession(active.session), error: message,
-      });
+      promptError = error instanceof Error ? error.message : String(error);
+      send(ws, { type: "error", code: accepted ? "GENERATION_FAILED" : "REQUEST_FAILED", message: promptError, sessionId: active.id, requestId });
     })
     .finally(() => {
       resources.permissions.cancelSession(active.id, "本轮任务已结束");
       active.promptTask = undefined;
+      active.phase = undefined;
       active.summary.updatedAt = new Date().toISOString();
       active.summary.messageCount = active.session.messages.length;
       active.contextUsage = contextUsageFromSession(active.session);
+      broadcastEvent({ type: "agent_end", sessionId: active.id, contextUsage: active.contextUsage, error: promptError });
       schedulePersistence(active);
     });
   active.promptTask = task;
 }
 
-function validDeletePath(path: string): boolean {
-  const base = resolve(sessionDir(resources));
+function validDeletePath(userId: string, path: string): boolean {
+  const base = resolve(sessionDir(resources, userId));
   const target = resolve(path);
   const rel = relative(base, target);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel) && target.endsWith(".jsonl");
 }
 
-async function deleteSession(sessionId: string): Promise<void> {
+async function deleteSession(userId: string, sessionId: string): Promise<void> {
   await pendingLoads.get(sessionId);
-  const record = await sessionStore.get(workspace, sessionId);
-  const info = (await listStoredSessions(resources)).find((item) => item.id === sessionId);
+  const record = await sessionStore.get(workspace, userId, sessionId);
   const active = pool.get(sessionId);
+  if (active && active.userId !== userId) throw new Error("会话不存在或无权访问");
+  if (!active && !record) throw new Error("会话不存在或无权访问");
   await active?.operationTask;
-  if (!info && !active && !record) throw new Error("会话不存在");
   active?.role.controller.abort();
   resources.permissions.cancelSession(sessionId);
   if (active?.session.isStreaming) await active.session.abort();
@@ -300,34 +291,64 @@ async function deleteSession(sessionId: string): Promise<void> {
   if (pending) await pending.catch(() => undefined);
   deletedSessionIds.add(sessionId);
   pool.remove(sessionId);
-  await sessionStore.delete(workspace, sessionId);
-  const candidatePaths = new Set([info?.path, active?.manager.getSessionFile(), record?.sessionPath].filter(Boolean) as string[]);
+  await sessionStore.delete(workspace, userId, sessionId);
+  const candidatePaths = new Set([active?.manager.getSessionFile(), record?.sessionPath].filter(Boolean) as string[]);
   for (const path of candidatePaths) {
-    if (!validDeletePath(path)) continue;
+    if (!validDeletePath(userId, path)) continue;
     try { await unlink(path); }
     catch (error) {
       const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
       if (code !== "ENOENT") throw error;
     }
   }
-  broadcast({ type: "session_deleted", sessionId });
-  broadcast({ type: "sessions", sessions: await listSessions() });
+  broadcast({ type: "session_deleted", sessionId }, userId);
 }
-
-await migrateLocalSessionsToDatabase();
 
 async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMessage): Promise<void> {
   const requestId = message.requestId;
+  let identity: WorkbenchIdentity;
+  if (message.type === "init") {
+    if (initializingClients.has(ws) || identities.has(ws)) throw new Error("连接已初始化或正在初始化，请重新连接后再试");
+    initializingClients.add(ws);
+    try {
+      identity = await authenticateWorkbench(message.accessToken);
+      if (ws.readyState !== WebSocket.OPEN) return;
+      identities.set(ws, identity);
+    } finally {
+      initializingClients.delete(ws);
+    }
+  } else {
+    const previous = identities.get(ws);
+    if (!previous) throw new WorkbenchAuthError("请先完成登录握手");
+    // Includes heartbeat: logout and permission revocation also invalidate idle connections.
+    identity = await authenticateWorkbench(previous.token);
+    if (identity.userId !== previous.userId) throw new WorkbenchAuthError("登录身份已变化，请重新连接");
+    if (ws.readyState !== WebSocket.OPEN || identities.get(ws) !== previous) return;
+    previous.authorizedUntil = identity.authorizedUntil;
+    previous.canManage = identity.canManage;
+    identity = previous;
+  }
+  const userId = identity.userId;
+  requireCommandPermission(identity, message.type);
   switch (message.type) {
     case "init": {
       if (message.protocolVersion !== PROTOCOL_VERSION) {
         throw new Error(`协议版本不兼容：客户端 ${message.protocolVersion}，服务端 ${PROTOCOL_VERSION}`);
       }
-      const [sessions, settings, primaryAgents] = await Promise.all([listSessions(), resources.features.getSettings(), resources.primaryAgents.list()]);
+      const [page, settings, primaryAgents] = await Promise.all([
+        sessionStore.list(workspace, userId),
+        identity.canManage ? resources.features.getSettings() : Promise.resolve({
+          skills: [], plugins: [], subagents: { enabled: true, maxConcurrent: 1, active: 0, profiles: [] },
+          mcp: { path: "", content: "", serverCount: 0, enabledServerCount: 0 },
+        }),
+        resources.primaryAgents.list(),
+      ]);
       send(ws, {
         type: "init",
         protocolVersion: PROTOCOL_VERSION,
-        sessions,
+        ...page,
+        userId,
+        canManage: identity.canManage,
         models: models.getModelsInfo(),
         providers: models.getProvidersInfo(),
         settings,
@@ -339,19 +360,24 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       return;
     }
     case "ping": send(ws, { type: "pong", requestId }); return;
-    case "list_sessions": send(ws, { type: "sessions", sessions: await listSessions(), requestId }); return;
+    case "list_sessions": {
+      const query = message.query === undefined ? "" : requireString(message.query, "query", 100).trim();
+      const cursor = message.cursor === undefined ? undefined : requireText(message.cursor, "cursor", 512);
+      send(ws, { type: "sessions", ...await sessionStore.list(workspace, userId, query, cursor), requestId });
+      return;
+    }
     case "create_session": {
-      const active = attach(await createSession(resources));
+      const active = attach(await createSession(resources, userId));
       await persistSession(active);
       send(ws, { type: "session_created", session: snapshot(active), requestId });
-      broadcast({ type: "sessions", sessions: await listSessions() });
+      broadcastEvent({ type: "session_updated", sessionId: active.id, summary: active.summary });
       return;
     }
     case "list_primary_agents":
       send(ws, { type: "primary_agents", agents: await resources.primaryAgents.list(), requestId });
       return;
     case "set_primary_agent": {
-      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      const active = await getSession(userId, requireText(message.sessionId, "sessionId", 128));
       await runSessionOperation(active, async () => {
         await switchPrimaryAgent(resources, active, requireText(message.agentId, "agentId", 64));
         await persistSession(active);
@@ -366,33 +392,48 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       return;
     }
     case "load_session": {
-      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
-      send(ws, { type: "session_state", session: snapshot(active), requestId });
+      const sessionId = requireText(message.sessionId, "sessionId", 128);
+      const before = message.before === undefined ? undefined : requireText(message.before, "before", 128);
+      const state = await loadHistory(userId, sessionId, before);
+      if (before) send(ws, { type: "history_page", sessionId, messages: state.messages, nextBefore: state.nextBefore, requestId });
+      else send(ws, { type: "session_state", session: state, requestId });
+      return;
+    }
+    case "rename_session": {
+      const sessionId = requireText(message.sessionId, "sessionId", 128);
+      const title = requireText(message.title, "title", 64).trim();
+      const active = pool.get(sessionId);
+      if (active && active.userId !== userId) throw new Error("会话不存在或无权访问");
+      if (active) {
+        active.summary.title = title;
+        active.manager.appendSessionInfo(title);
+        await persistSession(active);
+      } else {
+        await sessionStore.rename(workspace, userId, sessionId, title);
+      }
+      broadcast({ type: "session_renamed", sessionId, title, requestId }, userId);
       return;
     }
     case "delete_session":
-      await deleteSession(requireText(message.sessionId, "sessionId", 128));
+      await deleteSession(userId, requireText(message.sessionId, "sessionId", 128));
       return;
     case "prompt": {
-      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
-      const stockAccessToken = message.stockAccessToken === undefined
-        ? undefined
-        : requireText(message.stockAccessToken, "stockAccessToken", 8192);
-      await persistSession(active);
-      startPrompt(ws, active, requireText(message.text, "text"), requestId, stockAccessToken);
+      const active = await getSession(userId, requireText(message.sessionId, "sessionId", 128));
+      startPrompt(ws, active, requireText(message.text, "text"), requestId, identity.token);
       return;
     }
     case "abort": {
-      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      const active = await getSession(userId, requireText(message.sessionId, "sessionId", 128));
       active.role.controller.abort();
       resources.permissions.cancelSession(active.id);
       await active.session.abort();
       await active.promptTask;
       await persistSession(active);
+      send(ws, { type: "request_complete", sessionId: active.id, requestId });
       return;
     }
     case "set_model": {
-      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      const active = await getSession(userId, requireText(message.sessionId, "sessionId", 128));
       const provider = requireText(message.provider, "provider", 128);
       const modelId = requireText(message.modelId, "modelId", 256);
       const model = resources.modelRegistry.find(provider, modelId);
@@ -408,7 +449,7 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       return;
     }
     case "set_thinking_level": {
-      const active = await getSession(requireText(message.sessionId, "sessionId", 128));
+      const active = await getSession(userId, requireText(message.sessionId, "sessionId", 128));
       const allowed: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
       if (!allowed.includes(message.level)) throw new Error("思考强度无效");
       await runSessionOperation(active, async () => {
@@ -550,7 +591,7 @@ server.on("upgrade", (request, socket, head) => {
   let pathname: string;
   try { pathname = new URL(request.url || "/", `http://${request.headers.host || host}`).pathname; }
   catch { socket.destroy(); return; }
-  if (pathname !== "/ws" || !acceptedOrigin(request.headers.origin)) {
+  if (shuttingDown || pathname !== "/ws" || !acceptedOrigin(request.headers.origin)) {
     socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
@@ -562,11 +603,17 @@ wss.on("connection", (ws) => {
   clients.add(ws);
   clientIds.set(ws, randomUUID());
   const auth = new WsAuthInteraction(resources, (message) => send(ws, message), notifyCatalogChanged);
+  authInteractions.add(auth);
   ws.on("message", (data) => {
     let message: ClientMessage;
     try { message = parseClientMessage(data); }
     catch (error) {
-      send(ws, { type: "error", code: "BAD_REQUEST", message: error instanceof Error ? error.message : String(error) });
+      let requestId: string | undefined;
+      try {
+        const raw = JSON.parse(data.toString());
+        if (typeof raw?.requestId === "string" && raw.requestId.trim() && raw.requestId.length <= 128) requestId = raw.requestId;
+      } catch { /* Invalid JSON has no trustworthy request identifier. */ }
+      send(ws, { type: "error", code: "BAD_REQUEST", requestId, message: error instanceof Error ? error.message : String(error) });
       return;
     }
     if (message.type !== "init" && !initializedClients.has(ws)) {
@@ -578,34 +625,72 @@ wss.on("connection", (ws) => {
       });
       return;
     }
-    void route(ws, auth, message).catch((error) => {
+    if (shuttingDown) { send(ws, { type: "error", code: "SERVICE_UNAVAILABLE", requestId: message.requestId, message: "服务正在关闭，请稍后重连" }); return; }
+    const task = route(ws, auth, message).then(() => {
+      // Prompts retain the stronger prompt_accepted confirmation after persistence.
+      if (message.requestId && message.type !== "prompt") send(ws, {
+        type: "ack", command: message.type, requestId: message.requestId,
+        ...("sessionId" in message ? { sessionId: message.sessionId } : {}),
+      });
+    }).catch((error) => {
       send(ws, {
         type: "error",
-        code: "REQUEST_FAILED",
+        code: error instanceof WorkbenchAuthError ? error.code : error instanceof WorkbenchServiceError ? "SERVICE_UNAVAILABLE" : "REQUEST_FAILED",
         requestId: message.requestId,
         sessionId: "sessionId" in message ? message.sessionId : undefined,
         message: error instanceof Error ? error.message : String(error),
       });
-    });
+      if (error instanceof WorkbenchAuthError) {
+        initializedClients.delete(ws);
+        identities.delete(ws);
+        ws.close(error.code === "FORBIDDEN" ? 4403 : 4401, "Workbench authentication failed");
+      } else if (error instanceof WorkbenchServiceError) {
+        initializedClients.delete(ws);
+        ws.close(1013, "Workbench service unavailable");
+      }
+    }).finally(() => { activeRequests.delete(task); });
+    activeRequests.add(task);
   });
-  ws.on("close", () => { resources.permissions.closeOwner(clientIds.get(ws)!); clients.delete(ws); auth.close(); });
+  ws.on("close", () => {
+    initializedClients.delete(ws);
+    identities.delete(ws);
+    resources.permissions.closeOwner(clientIds.get(ws)!);
+    clients.delete(ws);
+    auth.close();
+    authInteractions.delete(auth);
+  });
   ws.on("error", (error) => console.error("WebSocket error", error));
 });
 
-let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   for (const client of clients) client.close(1001, "Server shutting down");
-  for (const active of pool.values()) {
+  for (const auth of authInteractions) auth.close();
+  const sessions = pool.values();
+  for (const active of sessions) {
     active.role.controller.abort();
     resources.permissions.cancelSession(active.id);
-    await active.operationTask?.catch(() => undefined);
-    if (active.session.isStreaming) await active.session.abort().catch(() => undefined);
-    await active.promptTask?.catch(() => undefined);
+  }
+  let abortTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled([
+      ...activeRequests,
+      ...sessions.map(async active => {
+        await active.session.abort();
+        await active.promptTask;
+        await active.operationTask;
+      }),
+    ]),
+    new Promise<void>(done => { abortTimer = setTimeout(done, 5000); }),
+  ]);
+  clearTimeout(abortTimer);
+  for (const active of pool.values()) {
     await persistSession(active).catch((error) => console.error(`Final persistence failed for ${active.id}`, error));
   }
   pool.close();
+  const forceClose = setTimeout(() => { for (const client of clients) client.terminate(); }, 1000);
+  forceClose.unref();
   wss.close();
   server.close();
   await Promise.allSettled([...pendingPersistence.values()]);

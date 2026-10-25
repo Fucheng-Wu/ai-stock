@@ -49,9 +49,9 @@ export default {
   min-width: 0;
   margin: 14px 0;
   overflow: hidden;
-  border: 1px solid #e2e4e8;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
-  background: #f7f8fa;
+  background: #f3f4f6;
   font-size: 12px;
 }
 .agent-code-block__header {
@@ -60,8 +60,8 @@ export default {
   justify-content: space-between;
   gap: 12px;
   padding: 9px 14px;
-  border-bottom: 1px solid #e6e8ec;
-  color: #737982;
+  border-bottom: 1px solid #e5e7eb;
+  color: #6b7280;
   font-family: "SFMono-Regular", Consolas, monospace;
   button {
     border: 0;
@@ -69,7 +69,7 @@ export default {
     color: inherit;
     font-size: 11px;
     cursor: pointer;
-    &:hover { color: #c65c28; }
+    &:hover { color: #4d6bfe; }
   }
 }
 pre {
@@ -83,7 +83,7 @@ pre {
 code {
   color: #303846;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 ::v-deep {

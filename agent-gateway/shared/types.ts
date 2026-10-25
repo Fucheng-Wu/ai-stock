@@ -53,6 +53,8 @@ export interface ToolCall {
   input?: unknown;
   output?: string;
   status: "running" | "done" | "error";
+  startedAt?: string;
+  durationMs?: number;
 }
 
 export interface ChatMessage {
@@ -167,6 +169,16 @@ export interface SessionSnapshot {
   isStreaming: boolean;
   contextUsage?: ContextUsage;
   primaryAgentId?: string;
+  nextBefore?: string;
+  phase?: "waiting" | "thinking" | "tool" | "answering";
+  startedAt?: string;
+  epoch?: string;
+  sequence?: number;
+}
+
+export interface SessionPage {
+  sessions: SessionSummary[];
+  nextCursor?: string;
 }
 
 export const PROTOCOL_VERSION = 1 as const;
@@ -176,30 +188,32 @@ export const PROTOCOL_VERSION = 1 as const;
  * event lets clients route interleaved output from multiple sessions without
  * unpacking a nested event envelope.
  */
-export type AgentUiEvent =
+export type AgentUiEvent = (
   | { type: "agent_start"; sessionId: string }
   | { type: "text_delta"; sessionId: string; delta: string }
   | { type: "thinking_delta"; sessionId: string; delta: string }
   | { type: "tool_start"; sessionId: string; tool: ToolCall }
   | { type: "tool_update"; sessionId: string; toolCallId: string; output?: string }
-  | { type: "tool_end"; sessionId: string; toolCallId: string; output?: string; isError?: boolean }
+  | { type: "tool_end"; sessionId: string; toolCallId: string; output?: string; isError?: boolean; durationMs?: number }
   | { type: "message_end"; sessionId: string; message: ChatMessage }
   | { type: "agent_end"; sessionId: string; contextUsage?: ContextUsage; error?: string }
-  | { type: "session_updated"; sessionId: string; summary?: SessionSummary; model?: { provider: string; id: string }; thinkingLevel?: ThinkingLevel; contextUsage?: ContextUsage; primaryAgentId?: string };
+  | { type: "session_updated"; sessionId: string; summary?: SessionSummary; model?: { provider: string; id: string }; thinkingLevel?: ThinkingLevel; contextUsage?: ContextUsage; primaryAgentId?: string }
+) & { epoch?: string; sequence?: number };
 
 type CommandBase = { requestId?: string };
 
 export type ClientMessage = CommandBase & (
-  | { type: "init"; protocolVersion: typeof PROTOCOL_VERSION }
+  | { type: "init"; protocolVersion: typeof PROTOCOL_VERSION; accessToken: string }
   | { type: "ping" }
-  | { type: "list_sessions" }
+  | { type: "list_sessions"; query?: string; cursor?: string }
   | { type: "create_session" }
   | { type: "list_primary_agents" }
   | { type: "set_primary_agent"; sessionId: string; agentId: string }
   | { type: "permission_response"; permissionId: string; decision: PermissionDecision }
-  | { type: "load_session"; sessionId: string }
+  | { type: "load_session"; sessionId: string; before?: string }
+  | { type: "rename_session"; sessionId: string; title: string }
   | { type: "delete_session"; sessionId: string }
-  // Only used by the current async tool invocation chain; never added to model messages.
+  // Legacy field is ignored: stock tools use the authenticated connection's token.
   | { type: "prompt"; sessionId: string; text: string; stockAccessToken?: string }
   | { type: "abort"; sessionId: string }
   | { type: "set_model"; sessionId: string; provider: string; modelId: string }
@@ -226,14 +240,19 @@ export type ClientMessage = CommandBase & (
 );
 
 export type ServerMessage = (
-  | { type: "init"; protocolVersion: typeof PROTOCOL_VERSION; sessions: SessionSummary[]; models: ModelInfo[]; providers: ProviderInfo[]; settings: FeatureSettings; primaryAgents?: PrimaryAgentInfo[] }
+  | { type: "init"; protocolVersion: typeof PROTOCOL_VERSION; sessions: SessionSummary[]; nextCursor?: string; userId?: string; canManage?: boolean; models: ModelInfo[]; providers: ProviderInfo[]; settings: FeatureSettings; primaryAgents?: PrimaryAgentInfo[] }
   | { type: "primary_agents"; agents: PrimaryAgentInfo[] }
   | { type: "permission_request"; permission: PermissionRequest }
   | { type: "permission_resolved"; permissionId: string; sessionId: string; decision: PermissionDecision; reason?: string }
   | { type: "pong" }
-  | { type: "sessions"; sessions: SessionSummary[] }
+  | { type: "sessions"; sessions: SessionSummary[]; nextCursor?: string }
   | { type: "session_created"; session: SessionSnapshot }
   | { type: "session_state"; session: SessionSnapshot }
+  | { type: "history_page"; sessionId: string; messages: ChatMessage[]; nextBefore?: string }
+  | { type: "session_renamed"; sessionId: string; title: string }
+  | { type: "prompt_accepted"; sessionId: string }
+  | { type: "request_complete"; sessionId: string }
+  | { type: "ack"; command: ClientMessage["type"]; sessionId?: string }
   | { type: "session_deleted"; sessionId: string }
   | { type: "models"; models: ModelInfo[] }
   | { type: "models_config"; content: string }

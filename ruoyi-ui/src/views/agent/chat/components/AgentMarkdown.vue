@@ -20,10 +20,26 @@ export default {
     text: { type: String, default: '' },
     streaming: { type: Boolean, default: false }
   },
+  data() { return { renderedText: this.text, renderedStreaming: this.streaming, renderTimer: null } },
   computed: {
-    parts() { return buildAgentContent(this.text, this.streaming) }
+    parts() { return buildAgentContent(this.renderedText, this.renderedStreaming) }
   },
+  watch: {
+    text() { this.scheduleRender() },
+    streaming() { this.scheduleRender() }
+  },
+  beforeDestroy() { clearTimeout(this.renderTimer) },
   methods: {
+    scheduleRender() {
+      if (!this.streaming) { clearTimeout(this.renderTimer); this.flushContent() }
+      else if (!this.renderTimer) this.renderTimer = setTimeout(() => this.flushContent(), 60)
+    },
+    flushContent() {
+      this.renderTimer = null
+      this.renderedText = this.text
+      this.renderedStreaming = this.streaming
+      this.$nextTick(() => this.notifyLayout())
+    },
     notifyLayout() { this.$emit('layout') }
   }
 }
@@ -32,9 +48,9 @@ export default {
 <style lang="scss" scoped>
 .agent-rich-content {
   min-width: 0;
-  color: #30343b;
-  font-size: 14px;
-  line-height: 1.85;
+  color: #374151;
+  font-size: 15px;
+  line-height: 1.9;
   overflow-wrap: anywhere;
 }
 .agent-rich-content__prose {
@@ -44,33 +60,35 @@ export default {
     p { margin: 0 0 14px; }
     h1, h2, h3, h4, h5, h6 {
       margin: 26px 0 12px;
-      color: #20242b;
+      color: #111827;
       font-weight: 650;
       line-height: 1.5;
     }
-    h1 { font-size: 24px; }
-    h2 { font-size: 20px; }
+    h1 { font-size: 25px; }
+    h2 { font-size: 21px; }
     h3 { font-size: 17px; }
     h4, h5, h6 { font-size: 15px; }
-    strong { font-weight: 650; color: #20242b; }
-    a { color: #bd5726; text-decoration: underline; text-underline-offset: 3px; }
+    strong { font-weight: 650; color: #111827; }
+    a { color: #4d6bfe; text-decoration: underline; text-underline-offset: 3px; }
     ul, ol { margin: 10px 0 16px; padding-left: 26px; }
     li { padding-left: 3px; margin: 5px 0; }
     li > p { margin: 6px 0; }
     li > ul, li > ol { margin: 5px 0; }
-    hr { height: 1px; margin: 24px 0; border: 0; background: #e7e9ed; }
+    hr { height: 1px; margin: 26px 0; border: 0; background: #e5e7eb; }
     blockquote {
       margin: 16px 0;
       padding: 5px 16px;
-      border-left: 3px solid #d7dae0;
-      color: #747b86;
+      border-left: 3px solid #dbe4ff;
+      background: #f8fafc;
+      border-radius: 0 8px 8px 0;
+      color: #6b7280;
       p:last-child { margin-bottom: 0; }
     }
     :not(pre) > code {
       padding: 3px 6px;
       border-radius: 5px;
-      background: #f0f1f4;
-      color: #ae4f29;
+      background: #edf2ff;
+      color: #4d6bfe;
       font-family: "SFMono-Regular", Consolas, monospace;
       font-size: 0.86em;
       white-space: break-spaces;
@@ -85,14 +103,14 @@ export default {
       line-height: 1.7;
     }
     img { display: block; max-width: 100%; height: auto; margin: 14px 0; border-radius: 8px; }
-    .agent-md-table { max-width: 100%; margin: 16px 0; overflow-x: auto; border: 1px solid #e2e5ea; border-radius: 10px; }
+    .agent-md-table { max-width: 100%; margin: 20px 0; overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 12px; }
     table { width: 100%; margin: 0; border-spacing: 0; border-collapse: collapse; font-size: 13px; line-height: 1.7; }
-    th, td { min-width: 100px; padding: 11px 14px; border-bottom: 1px solid #e6e8ed; text-align: left; vertical-align: top; }
-    th { background: #f7f8fa; color: #4c5561; font-weight: 600; white-space: nowrap; }
+    th, td { min-width: 100px; padding: 13px 16px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }
+    th { background: #f6f7f9; color: #6b7280; font-weight: 600; white-space: nowrap; }
     tr:last-child td { border-bottom: 0; }
-    tbody tr:nth-child(even) { background: #fcfcfd; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
     .agent-task-list-item { list-style: none; }
-    .agent-task-checkbox { margin: 0 5px 0 -20px; accent-color: #e98048; vertical-align: middle; }
+    .agent-task-checkbox { margin: 0 5px 0 -20px; accent-color: #4d6bfe; vertical-align: middle; }
     .hljs-comment { color: #818b98; }
     .hljs-keyword, .hljs-literal { color: #9659aa; }
     .hljs-string { color: #30804e; }
@@ -100,7 +118,7 @@ export default {
   }
 }
 @media (max-width: 600px) {
-  .agent-rich-content { font-size: 13px; }
+  .agent-rich-content { font-size: 14px; }
   .agent-rich-content__prose ::v-deep {
     h1 { font-size: 21px; }
     h2 { font-size: 18px; }

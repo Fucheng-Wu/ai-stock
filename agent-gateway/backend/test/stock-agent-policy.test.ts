@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { STOCK_TOOLS } from "../src/lib/agent-policy.js";
@@ -11,6 +11,9 @@ import { createPermissionExtension, PermissionBroker, type RoleRuntime } from ".
 import { PrimaryAgentRegistry } from "../src/lib/primary-agents.js";
 import { createSession, resumeSessionFromDatabase, switchPrimaryAgent } from "../src/lib/session-factory.js";
 import { createSharedResources } from "../src/lib/shared-resources.js";
+import { buildPersistedRecord } from "../src/lib/session-record.js";
+import { attachEventRelay } from "../src/lib/event-relay.js";
+import { convertActiveMessages } from "../src/lib/message-converter.js";
 import { runWithStockToolToken } from "../subagents/stock-analyst/tools.js";
 
 async function guard(runtime: RoleRuntime, child?: Parameters<typeof createPermissionExtension>[3]) {
@@ -128,12 +131,39 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     process.env.DEEPSEEK_API_KEY = "test-only";
     process.env.STOCK_API_BASE_URL = `http://127.0.0.1:${stockPort}`;
     const resources = await createSharedResources(root);
-    const active = await createSession(resources);
+    const active = await createSession(resources, "1");
     activeSessions.push(active);
+    const otherUser = await createSession(resources, "2");
+    activeSessions.push(otherUser);
+    assert.equal(active.userId, "1");
+    assert.equal(otherUser.userId, "2");
+    assert.notEqual(dirname(active.manager.getSessionFile()!), dirname(otherUser.manager.getSessionFile()!));
+    // Regression: a new Pi session has a path but no JSONL file yet.
+    await assert.rejects(access(active.manager.getSessionFile()!), { code: "ENOENT" });
+    const emptyRecord = buildPersistedRecord(active, root);
+    assert.equal(emptyRecord.userId, "1");
+    assert.deepEqual(emptyRecord.rawMessages, []);
+    assert.equal(JSON.parse(emptyRecord.sessionJsonl!.split("\n")[0]).id, active.id);
+    const restoredEmpty = await resumeSessionFromDatabase(resources, emptyRecord);
+    activeSessions.push(restoredEmpty);
+    assert.equal(restoredEmpty.id, active.id);
+    assert.equal(restoredEmpty.userId, "1");
+    assert.deepEqual(restoredEmpty.session.messages, []);
+    assert.equal(restoredEmpty.session.model?.id, "gateway-test");
     assert.deepEqual(active.session.getActiveToolNames(), ["Agent"]);
     assert.equal(active.role.profile.id, "general");
     for (const id of ["build", "plan", "reviewer"]) await assert.rejects(switchPrimaryAgent(resources, active, id));
+    let partialSnapshots = 0;
+    let missingPartialSnapshot = false;
+    attachEventRelay(active, event => {
+      if (event.type === "text_delta") {
+        partialSnapshots++;
+        if (!convertActiveMessages(active).at(-1)?.text.endsWith(event.delta)) missingPartialSnapshot = true;
+      }
+    });
     await runWithStockToolToken(token, () => active.session.prompt("查询600519行情", { expandPromptTemplates: false }));
+    assert.ok(partialSnapshots > 0);
+    assert.equal(missingPartialSnapshot, false, "live snapshot omitted the latest streamed text");
     assert.equal(stockRequests, 1);
     assert.equal(requests.length, 4);
     for (const body of requests) {
@@ -149,7 +179,17 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
       }
     }
     assert.equal((await resources.features.getSubagentSettings()).active, 0);
+    // A missing local file must not prevent a complete backup and JSONL recovery.
+    await unlink(active.manager.getSessionFile()!);
+    const conversationRecord = buildPersistedRecord(active, root);
+    assert.ok(!JSON.stringify(conversationRecord).includes(token));
+    const restoredConversation = await resumeSessionFromDatabase(resources, conversationRecord);
+    activeSessions.push(restoredConversation);
+    // JSON persistence intentionally omits optional properties whose value is undefined.
+    assert.deepEqual(restoredConversation.session.messages, JSON.parse(JSON.stringify(active.session.messages)));
+    assert.equal(restoredConversation.userId, "1");
     const recovered = await resumeSessionFromDatabase(resources, {
+      userId: "1",
       summary: { id: "restored-test", title: "恢复", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       workspace: root, rawMessages: [], model: { provider: "deepseek", id: "gateway-test" }, thinkingLevel: "off",
     });

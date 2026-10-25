@@ -7,33 +7,36 @@
         <div class="agent-brand__mark">✦</div>
         <div class="agent-brand__copy">
           <strong>Orange Agent</strong>
-          <span>PERSONAL ASSISTANT</span>
+          <span>让每一次探索，都更进一步</span>
         </div>
         <button class="agent-icon-button agent-sidebar__close" type="button" aria-label="关闭会话列表" @click="mobileSidebarOpen = false">
           <i class="el-icon-close" />
         </button>
       </div>
 
-      <button class="agent-new-chat" type="button" :disabled="!isConnected" @click="startNewConversation">
+      <button class="agent-new-chat" type="button" :disabled="!isConnected || creatingSession" @click="startNewConversation">
         <i class="el-icon-plus" />
         <span>新建对话</span>
-        <span class="agent-new-chat__shortcut">⌘ N</span>
+        <span class="agent-new-chat__shortcut">{{ shortcutLabel }}</span>
       </button>
 
+      <el-input v-model="sessionQuery" class="agent-session-search" placeholder="搜索对话标题" prefix-icon="el-icon-search" size="small" :maxlength="100" clearable @input="scheduleSessionSearch" />
       <div class="agent-session-section">
         <div class="agent-section-title">
           <span>最近对话</span>
-          <span>{{ sessions.length }}</span>
+          <span>已加载 {{ sortedSessions.length }}</span>
         </div>
 
         <div class="agent-session-list">
           <div v-if="!sortedSessions.length" class="agent-session-empty">
             <i class="el-icon-chat-dot-round" />
-            <span>还没有对话</span>
+            <span>{{ sessionsLoading ? '正在搜索…' : sessionQuery ? '没有匹配的对话' : '还没有对话' }}</span>
           </div>
 
+          <div v-for="group in sessionGroups" :key="group.label" class="agent-session-group">
+          <div class="agent-session-group__title">{{ group.label }}</div>
           <div
-            v-for="session in sortedSessions"
+            v-for="session in group.sessions"
             :key="session.id"
             class="agent-session-item"
             :class="{ 'is-active': activeSessionId === session.id }"
@@ -45,26 +48,32 @@
                 <small>{{ formatSessionTime(session.updatedAt) }}</small>
               </span>
             </button>
+            <div class="agent-session-item__actions">
+            <button class="agent-session-action" type="button" title="重命名对话" aria-label="重命名对话" :disabled="!isConnected" @click.stop="renameSession(session)"><i class="el-icon-edit" /></button>
             <button
-              class="agent-session-item__delete"
+              class="agent-session-action is-danger"
               type="button"
               title="删除对话"
               aria-label="删除对话"
+              :disabled="!isConnected"
               @click.stop="confirmDeleteSession(session)"
             >
               <i class="el-icon-delete" />
             </button>
+            </div>
           </div>
+          </div>
+          <button v-if="nextSessionCursor || sessionsError" class="agent-history-button" type="button" :disabled="sessionsLoading || !isConnected" @click="requestSessions(Boolean(nextSessionCursor) && !sessionsError)">{{ sessionsLoading ? '加载中…' : sessionsError ? '重试加载列表' : '加载更多对话' }}</button>
         </div>
       </div>
 
       <div class="agent-sidebar__footer">
+        <div class="agent-account"><span class="agent-account__avatar">{{ displayName.slice(0, 1) }}</span><span><strong>{{ displayName }}</strong><small><i class="el-icon-lock" /> 私人对话空间</small></span></div>
         <button class="agent-connection" type="button" @click="reconnectNow">
           <span class="agent-connection__dot" :class="'is-' + connectionState" />
           <span>{{ connectionLabel }}</span>
           <i v-if="!isConnected" class="el-icon-refresh" />
         </button>
-        <span class="agent-endpoint">{{ endpointLabel }}</span>
       </div>
     </aside>
 
@@ -74,9 +83,10 @@
           <i class="el-icon-s-unfold" />
         </button>
         <div class="agent-topbar__title">
+          <span class="agent-topbar__eyebrow">个人助理 / 对话</span>
           <strong>{{ activeTitle }}</strong>
-          <span>普通 Agent<span v-if="activeModel"> · {{ activeModel }}</span></span>
         </div>
+        <span v-if="activeModel" class="agent-model-badge"><i class="el-icon-cpu" /> {{ activeModel }}</span>
         <div class="agent-topbar__status" :class="{ 'is-online': isConnected }">
           <span />
           {{ isConnected ? '在线' : connectionLabel }}
@@ -85,11 +95,12 @@
 
       <div v-if="!isConnected" class="agent-connection-banner">
         <i class="el-icon-warning-outline" />
-        <span>{{ connectionState === 'reconnecting' ? '与 Agent 的连接已中断，正在自动重连…' : '暂时无法连接 Agent Gateway。' }}</span>
-        <button type="button" @click="reconnectNow">重新连接</button>
+        <span>{{ connectionDescription }}</span>
+        <button type="button" @click="recoverConnection">{{ connectionState === 'auth-expired' ? '重新登录' : '重新连接' }}</button>
       </div>
 
-      <section ref="messageScroller" class="agent-conversation" @scroll="handleConversationScroll">
+      <section ref="messageScroller" class="agent-conversation" role="log" aria-label="聊天记录" aria-live="off" @scroll="handleConversationScroll">
+        <div v-if="historyErrors[activeSessionId]" class="agent-request-error" role="alert">{{ historyErrors[activeSessionId] }} <button type="button" :disabled="!isConnected" @click="loadSession(activeSessionId)">重试载入</button></div>
         <div v-if="isSessionLoading" class="agent-session-loading">
           <i class="el-icon-loading" />
           <span>正在载入对话</span>
@@ -97,8 +108,9 @@
 
         <div v-else-if="!activeState || !activeState.messages.length" class="agent-welcome">
           <div class="agent-welcome__mark">✦</div>
-          <h1>今天想聊点什么？</h1>
-          <p>可以正常聊天，股票问题会交给专属子 Agent，查询行情、解读 520 战法和研究公开资讯。</p>
+          <span class="agent-welcome__eyebrow">{{ greeting }}，{{ displayName }}</span>
+          <h1>从一个问题，<br><em>开始新的探索。</em></h1>
+          <p>聊聊你的想法，或让股票助手帮你研究行情、<br class="agent-desktop-break">解读 520 战法，把信息整理成清晰的答案。</p>
           <div class="agent-suggestions">
             <button v-for="suggestion in suggestions" :key="suggestion.title" type="button" @click="useSuggestion(suggestion.prompt)">
               <span class="agent-suggestions__icon"><i :class="suggestion.icon" /></span>
@@ -109,9 +121,11 @@
               <i class="el-icon-right agent-suggestions__arrow" />
             </button>
           </div>
+          <div class="agent-welcome__footnote"><i class="el-icon-lock" /> 对话记录仅当前账号可见</div>
         </div>
 
         <div v-else class="agent-message-list">
+          <button v-if="activeState.nextBefore" class="agent-history-button" type="button" :disabled="loadingOlder || !isConnected" @click="loadOlderMessages">{{ loadingOlder ? '正在加载…' : '加载更早的消息' }}</button>
           <article
             v-for="message in activeState.messages"
             :key="message.id"
@@ -127,8 +141,11 @@
             <div class="agent-message__body">
               <div v-if="message.role === 'assistant'" class="agent-message__author">
                 Orange Agent
+                <span class="agent-message__badge">助手</span>
                 <span v-if="isMessageStreaming(message)" class="agent-typing-dot" />
+                <time v-else-if="message.timestamp">{{ formatSessionTime(message.timestamp) }}</time>
               </div>
+              <div v-else-if="message.role === 'user'" class="agent-message__author is-user">你<time v-if="message.timestamp">{{ formatSessionTime(message.timestamp) }}</time></div>
 
               <agent-thinking-panel
                 v-if="message.thinking"
@@ -137,31 +154,13 @@
                 @layout="handleRichContentLayout"
               />
 
-              <div
+              <agent-tool-card
                 v-for="tool in (message.tools || [])"
                 :key="tool.id"
-                class="agent-tool"
-                :class="'is-' + tool.status"
-              >
-                <button type="button" @click="toggleTool(tool.id)">
-                  <span class="agent-tool__status">
-                    <i :class="tool.status === 'running' ? 'el-icon-loading' : tool.status === 'error' ? 'el-icon-close' : 'el-icon-check'" />
-                  </span>
-                  <span class="agent-tool__name">{{ toolLabel(tool.name) }}</span>
-                  <span class="agent-tool__state">{{ tool.status === 'running' ? '执行中' : tool.status === 'error' ? '执行失败' : '已完成' }}</span>
-                  <i :class="expandedTools[tool.id] ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
-                </button>
-                <div v-if="expandedTools[tool.id]" class="agent-tool__details">
-                  <div v-if="tool.input !== undefined">
-                    <strong>输入</strong>
-                    <pre>{{ formatToolValue(tool.input) }}</pre>
-                  </div>
-                  <div v-if="tool.output">
-                    <strong>输出</strong>
-                    <pre>{{ tool.output }}</pre>
-                  </div>
-                </div>
-              </div>
+                :tool="tool"
+                :now="clockNow"
+                @layout="handleRichContentLayout"
+              />
 
               <div v-if="message.role === 'user'" class="agent-user-bubble">{{ message.text }}</div>
               <agent-markdown
@@ -189,18 +188,23 @@
         </div>
       </section>
 
+      <button v-if="userPinnedScroll && activeState && !activeState.hasNewer" class="agent-jump-latest" type="button" aria-label="回到最新消息" @click="scrollToBottom(true)"><i class="el-icon-bottom" /> 最新消息</button>
+
       <footer class="agent-composer-area">
+        <button v-if="activeState && activeState.hasNewer" class="agent-history-button" type="button" :disabled="!isConnected" @click="loadSession(activeSessionId)">回到最新消息</button>
+        <div v-if="activeState && activeState.isStreaming" class="agent-run-status" role="status" aria-live="polite"><i class="el-icon-loading" /> {{ runPhaseLabel }} <span>{{ runElapsed }}</span></div>
+        <div v-if="activeState && activeState.sendError" class="agent-request-error" role="alert">{{ activeState.sendError }} <button type="button" :disabled="!isConnected || activeState.isStreaming" @click="retryFailedPrompt">{{ activeState.delivery === 'unknown' ? '取回问题' : activeState.delivery === 'accepted' ? '重新提问' : '重试发送' }}</button></div>
         <div class="agent-composer" :class="{ 'is-focused': composerFocused, 'is-disabled': !isConnected }">
           <el-input
             ref="composer"
             v-model="inputText"
             class="agent-composer__input"
             type="textarea"
-            :autosize="{ minRows: 1, maxRows: 6 }"
+            :autosize="{ minRows: 2, maxRows: 6 }"
             maxlength="12000"
             resize="none"
-            :disabled="!isConnected"
-            :placeholder="isConnected ? '给 Agent 发送消息…' : '连接成功后即可开始对话'"
+            :disabled="connectionState === 'auth-expired' || connectionState === 'forbidden'"
+            :placeholder="isConnected ? '写下你的问题，让想法更进一步…' : '可以先写下问题，连接恢复后发送'"
             @focus="composerFocused = true"
             @blur="composerFocused = false"
             @keydown.enter.native="handleComposerEnter"
@@ -211,6 +215,7 @@
             type="button"
             title="停止生成"
             aria-label="停止生成"
+            :disabled="activeState.stopRequested || !isConnected"
             @click="abortGeneration"
           >
             <span />
@@ -228,7 +233,7 @@
           </button>
         </div>
         <div class="agent-composer__meta">
-          <span>Enter 发送 · Shift + Enter 换行</span>
+          <span><kbd>Enter</kbd> 发送 <span class="agent-composer__separator">·</span> <kbd>Shift + Enter</kbd> 换行</span>
           <span v-if="contextLabel">{{ contextLabel }}</span>
           <span v-else>Agent 的回答可能存在偏差，请核对重要信息</span>
         </div>
@@ -249,9 +254,11 @@
 <script>
 import { AGENT_PROTOCOL_VERSION, getAgentWebSocketUrl } from '@/utils/agentSocket'
 import { getToken } from '@/utils/auth'
+import { groupSessions, draftKey, toolDescription, toolPreview, MAX_CACHED_SESSIONS, MAX_VISIBLE_MESSAGES } from '@/utils/agent-chat-state'
 import AgentMarkdown from './components/AgentMarkdown.vue'
 import AgentThinkingPanel from './components/AgentThinkingPanel.vue'
 import AgentPermissionDialog from './components/AgentPermissionDialog.vue'
+import AgentToolCard from './components/AgentToolCard.vue'
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -259,10 +266,30 @@ function createId(prefix) {
 
 export default {
   name: 'AgentChat',
-  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog },
+  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog, AgentToolCard },
   data() {
     return {
       socketClient: null,
+      connectionToken: '',
+      draftUserId: '',
+      authFailedToken: '',
+      connectionError: '',
+      handshakeTimer: null,
+      clockTimer: null,
+      clockNow: Date.now(),
+      sessionQuery: '',
+      nextSessionCursor: null,
+      sessionsLoading: false,
+      sessionsError: '',
+      latestSessionRequestId: '',
+      searchTimer: null,
+      pendingRequests: {},
+      historyErrors: {},
+      loadingOlder: false,
+      eventQueue: [],
+      eventFlushTimer: null,
+      pendingLiveEvents: {},
+      latestLoadRequests: {},
       reconnectTimer: null,
       heartbeatTimer: null,
       pongTimer: null,
@@ -294,6 +321,15 @@ export default {
     }
   },
   computed: {
+    displayName() {
+      const user = this.$store && this.$store.state.user
+      return user && (user.nickName || user.name) || '朋友'
+    },
+    greeting() {
+      const hour = new Date(this.clockNow).getHours()
+      return hour < 6 ? '夜深了' : hour < 12 ? '上午好' : hour < 18 ? '下午好' : '晚上好'
+    },
+    shortcutLabel() { return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '') ? '⌘ N' : 'Ctrl N' },
     pendingPermission() {
       return this.permissionRequests[0] || null
     },
@@ -305,7 +341,26 @@ export default {
       return this.connectionState === 'connected'
     },
     sortedSessions() {
-      return [...this.sessions].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+      const query = this.sessionQuery.trim().toLowerCase()
+      return this.sessions.filter(session => !query || String(session.title).toLowerCase().includes(query)).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+    },
+    sessionGroups() {
+      return groupSessions(this.sortedSessions, this.clockNow)
+    },
+    connectionDescription() {
+      if (this.connectionError) return this.connectionError
+      const labels = { connecting: '正在连接 Agent 服务…', authenticating: '正在验证工作台登录身份…', reconnecting: '连接中断，正在自动重连，草稿已保留。', 'service-unavailable': '工作台服务暂不可用，正在自动重连，草稿已保留。', 'auth-expired': '登录已失效，请重新登录。', forbidden: '当前账号没有 Agent 助手访问权限。' }
+      return labels[this.connectionState] || '暂时无法连接 Agent 服务，草稿已保留。'
+    },
+    runPhaseLabel() {
+      if (!this.isConnected) return '连接中断，恢复后同步执行结果'
+      if (this.activeState && this.activeState.stopRequested) return '正在停止生成'
+      const labels = { waiting: '等待 Agent 回复', thinking: '正在思考', tool: '正在执行工具', answering: '正在生成回答' }
+      return labels[this.activeState && this.activeState.phase] || labels.waiting
+    },
+    runElapsed() {
+      const started = this.activeState && new Date(this.activeState.startedAt).getTime()
+      return started ? `已等待 ${Math.max(0, Math.floor((this.clockNow - started) / 1000))} 秒` : ''
     },
     activeState() {
       return this.activeSessionId ? this.sessionStates[this.activeSessionId] : null
@@ -322,13 +377,18 @@ export default {
       const labels = {
         connected: '已连接',
         connecting: '连接中…',
+        authenticating: '验证身份中…',
         reconnecting: '正在重连…',
+        'service-unavailable': '服务暂不可用',
+        'auth-expired': '登录已过期',
+        forbidden: '无访问权限',
         disconnected: '未连接'
       }
       return labels[this.connectionState] || '未连接'
     },
     canSubmit() {
       if (!this.isConnected || this.creatingSession || !this.inputText.trim()) return false
+      if (this.activeSessionId && this.loadingSessionIds[this.activeSessionId]) return false
       if (this.activeSessionId && !this.activeState) return false
       return !(this.activeState && this.activeState.isStreaming)
     },
@@ -341,15 +401,29 @@ export default {
       return `上下文已用 ${Math.round(usage.percent)}%`
     }
   },
+  watch: {
+    inputText() { this.saveDraft() },
+    '$store.state.user.token'() {
+      this.handleIdentityChange()
+    }
+  },
   mounted() {
     this.endpointLabel = process.env.VUE_APP_AGENT_WS_URL || '/agent-ws'
     window.addEventListener('keydown', this.handleGlobalShortcut)
+    window.addEventListener('focus', this.handleWindowFocus)
+    this.clockTimer = setInterval(() => { this.clockNow = Date.now() }, 1000)
     this.connectSocket()
   },
   beforeDestroy() {
+    this.saveDraft()
     this.componentDestroyed = true
     window.removeEventListener('keydown', this.handleGlobalShortcut)
+    window.removeEventListener('focus', this.handleWindowFocus)
     this.clearSocketTimers()
+    if (this.clockTimer) clearInterval(this.clockTimer)
+    if (this.searchTimer) clearTimeout(this.searchTimer)
+    this.clearPendingRequests()
+    this.clearEventQueue()
     if (this.socketClient) {
       this.socketClient.onclose = null
       this.socketClient.close(1000, 'Page closed')
@@ -357,7 +431,210 @@ export default {
     }
   },
   methods: {
+    saveDraft() {
+      if (!this.draftUserId || !this.connectionToken || this.connectionToken !== getToken()) return
+      try {
+        const key = draftKey(this.draftUserId, this.activeSessionId)
+        const state = this.activeState
+        const unsent = state && ['sending', 'unknown', 'rejected'].includes(state.delivery) ? state.lastPrompt : this.pendingPrompt
+        const text = this.inputText || unsent
+        if (text) window.sessionStorage.setItem(key, text)
+        else window.sessionStorage.removeItem(key)
+      } catch (_) { /* Storage may be disabled; the in-memory draft still works. */ }
+    },
+    readDraft(sessionId) {
+      if (!this.draftUserId) return ''
+      try { return window.sessionStorage.getItem(draftKey(this.draftUserId, sessionId)) || '' } catch (_) { return '' }
+    },
+    switchDraft(sessionId) {
+      this.saveDraft()
+      this.activeSessionId = sessionId
+      this.inputText = this.readDraft(sessionId)
+    },
+    scheduleSessionSearch() {
+      if (this.searchTimer) clearTimeout(this.searchTimer)
+      this.searchTimer = setTimeout(() => this.requestSessions(false), 300)
+    },
+    requestSessions(append = false) {
+      const requestId = createId('sessions')
+      this.latestSessionRequestId = requestId
+      this.sessionsError = ''
+      this.sessionsLoading = true
+      if (!this.sendSocket({ type: 'list_sessions', query: this.sessionQuery.trim(), cursor: append ? this.nextSessionCursor : undefined, requestId })) this.sessionsLoading = false
+    },
+    renameSession(session) {
+      this.$prompt('输入新的对话标题（最多64字）', '重命名对话', { inputValue: session.title, inputValidator: value => Boolean(value && value.trim() && value.length <= 64) || '请输入1至64字的标题' }).then(({ value }) => {
+        this.sendSocket({ type: 'rename_session', sessionId: session.id, title: value.trim(), requestId: createId('rename') })
+      }).catch(() => {})
+    },
+    trackRequest(message) {
+      if (!message.requestId || !['create_session', 'load_session', 'list_sessions', 'rename_session', 'prompt', 'abort'].includes(message.type)) return
+      const request = { ...message }
+      request.timer = setTimeout(() => {
+        delete this.pendingRequests[message.requestId]
+        this.failRequest(request, '请求超时，请重试。', message.type === 'prompt')
+      }, message.type === 'prompt' ? 20000 : 15000)
+      this.pendingRequests[message.requestId] = request
+    },
+    finishRequest(requestId) {
+      const request = requestId && this.pendingRequests[requestId]
+      if (!request) return null
+      clearTimeout(request.timer)
+      delete this.pendingRequests[requestId]
+      return request
+    },
+    clearPendingRequests(reason) {
+      Object.keys(this.pendingRequests).forEach(id => {
+        const request = this.finishRequest(id)
+        if (reason) this.failRequest(request, reason, request.type === 'prompt')
+      })
+    },
+    failRequest(request, reason, uncertain = false) {
+      if (!request) return
+      if (request.type === 'load_session') {
+        this.$delete(this.loadingSessionIds, request.sessionId)
+        this.loadingOlder = false
+        this.$set(this.historyErrors, request.sessionId, reason)
+      } else if (request.type === 'list_sessions') {
+        if (request.query !== this.sessionQuery.trim() || request.requestId !== this.latestSessionRequestId) return
+        this.sessionsLoading = false
+        this.sessionsError = reason
+      } else if (request.type === 'create_session') {
+        this.creatingSession = false
+        if (this.pendingPrompt) this.inputText = this.pendingPrompt
+        this.pendingPrompt = ''
+        this.saveDraft()
+      } else if (request.type === 'prompt') {
+        const state = this.sessionStates[request.sessionId]
+        if (!state) return
+        state.isStreaming = false
+        state.delivery = uncertain ? 'unknown' : 'rejected'
+        state.sendError = uncertain ? '连接中断或确认超时，尚不能确认消息是否送达。恢复连接后请检查历史，可取回问题继续编辑。' : reason
+        state.lastPrompt = request.text
+        this.saveDraft()
+        if (!uncertain) state.messages = state.messages.filter(message => message.id !== state.optimisticId)
+      } else if (request.type === 'abort') {
+        const state = this.sessionStates[request.sessionId]
+        if (state) state.stopRequested = false
+        this.$message.warning(reason)
+      } else if (request.type === 'rename_session') {
+        this.$message.warning(reason)
+      }
+    },
+    retryFailedPrompt() {
+      const state = this.activeState
+      if (!state || !state.lastPrompt || state.isStreaming) return
+      if (state.delivery === 'unknown') {
+        this.inputText = state.lastPrompt
+        state.messages = state.messages.filter(message => message.id !== state.optimisticId)
+        state.delivery = 'draft'
+        state.sendError = ''
+        this.saveDraft()
+        this.focusComposer()
+        return
+      }
+      this.sendPromptToActive(state.lastPrompt)
+    },
+    clearEventQueue() {
+      if (this.eventFlushTimer) clearTimeout(this.eventFlushTimer)
+      this.eventFlushTimer = null
+      this.eventQueue = []
+    },
+    queueAgentEvent(event) {
+      const last = this.eventQueue[this.eventQueue.length - 1]
+      const canMerge = event.sequence === undefined && last && last.sequence === undefined
+      if (canMerge && ['text_delta', 'thinking_delta'].includes(event.type) && last.type === event.type && last.sessionId === event.sessionId) last.delta += event.delta || ''
+      else if (canMerge && event.type === 'tool_update' && last.type === event.type && last.sessionId === event.sessionId && last.toolCallId === event.toolCallId) last.output = event.output
+      else this.eventQueue.push(event)
+      if (this.eventQueue.length >= 500) { this.flushAgentEvents(); return }
+      if (!this.eventFlushTimer) this.eventFlushTimer = setTimeout(() => this.flushAgentEvents(), 40)
+    },
+    bufferLiveEvent(event) {
+      const pending = this.pendingLiveEvents[event.sessionId] || []
+      pending.push(event)
+      if (pending.length > 500) pending.shift()
+      this.pendingLiveEvents[event.sessionId] = pending
+      if (!this.loadingSessionIds[event.sessionId]) this.loadSession(event.sessionId)
+    },
+    flushAgentEvents() {
+      if (this.eventFlushTimer) clearTimeout(this.eventFlushTimer)
+      this.eventFlushTimer = null
+      const events = this.eventQueue
+      this.eventQueue = []
+      events.forEach(event => this.applyAgentEvent(event))
+    },
+    evictSessionCache() {
+      const idle = Object.keys(this.sessionStates).filter(id => id !== this.activeSessionId && !this.sessionStates[id].isStreaming)
+        .sort((a, b) => (this.sessionStates[a].lastAccessAt || 0) - (this.sessionStates[b].lastAccessAt || 0))
+      while (Object.keys(this.sessionStates).length > MAX_CACHED_SESSIONS && idle.length) {
+        const id = idle.shift()
+        this.sessionStates[id].messages.forEach(message => message.tools.forEach(tool => this.$delete(this.expandedTools, tool.id)))
+        this.$delete(this.sessionStates, id)
+      }
+    },
+    loadOlderMessages() {
+      if (!this.activeState || !this.activeState.nextBefore || this.loadingOlder) return
+      this.loadingOlder = true
+      this.$delete(this.historyErrors, this.activeSessionId)
+      if (!this.sendSocket({ type: 'load_session', sessionId: this.activeSessionId, before: this.activeState.nextBefore, requestId: createId('older') })) this.loadingOlder = false
+    },
+    describeTool: toolDescription,
+    previewTool: toolPreview,
+    toolDuration(tool) {
+      const duration = tool.durationMs === undefined && tool.status === 'running' && tool.startedAt ? this.clockNow - new Date(tool.startedAt).getTime() : tool.durationMs
+      return Number.isFinite(duration) ? `${Math.max(0, duration / 1000).toFixed(1)}秒` : ''
+    },
+    resetIdentityConnection() {
+      this.saveDraft()
+      this.draftUserId = ''
+      this.clearSocketTimers()
+      this.clearPendingRequests()
+      this.clearEventQueue()
+      if (this.socketClient) {
+        this.socketClient.onclose = null
+        this.socketClient.close(1000, 'Identity changed')
+        this.socketClient = null
+      }
+      this.connectionToken = ''
+      this.connectionState = 'disconnected'
+      this.sessions = []
+      this.sessionStates = {}
+      this.loadingSessionIds = {}
+      this.activeSessionId = null
+      this.inputText = ''
+      this.pendingPrompt = ''
+      this.creatingSession = false
+      this.historyErrors = {}
+      this.pendingLiveEvents = {}
+      this.latestLoadRequests = {}
+      this.sessionQuery = ''
+      this.nextSessionCursor = null
+      this.sessionsLoading = false
+      this.loadingOlder = false
+      if (this.searchTimer) clearTimeout(this.searchTimer)
+      this.searchTimer = null
+      this.expandedTools = {}
+      this.copiedMessageId = ''
+      this.clearPermissions()
+    },
+    handleIdentityChange() {
+      if (this.authFailedToken && this.authFailedToken === getToken()) return
+      if (this.connectionToken === (getToken() || '')) return
+      this.resetIdentityConnection()
+      this.reconnectAttempts = 0
+      this.authFailedToken = ''
+      if (getToken() && !this.componentDestroyed) this.connectSocket()
+    },
+    handleWindowFocus() {
+      this.handleIdentityChange()
+      if (this.isConnected && this.activeSessionId) this.loadSession(this.activeSessionId)
+    },
     connectSocket() {
+      const token = getToken()
+      if (!token) {
+        this.resetIdentityConnection()
+        return
+      }
       if (this.componentDestroyed || !window.WebSocket) {
         this.connectionState = 'disconnected'
         return
@@ -365,6 +642,7 @@ export default {
       if (this.socketClient && (this.socketClient.readyState === WebSocket.OPEN || this.socketClient.readyState === WebSocket.CONNECTING)) return
 
       this.connectionState = this.reconnectAttempts ? 'reconnecting' : 'connecting'
+      this.connectionError = ''
       let socket
       try {
         socket = new WebSocket(getAgentWebSocketUrl())
@@ -374,16 +652,21 @@ export default {
         return
       }
       this.socketClient = socket
+      this.connectionToken = token
 
       socket.onopen = () => {
         if (this.socketClient !== socket) return
-        this.reconnectAttempts = 0
-        this.connectionState = 'connected'
-        this.startHeartbeat()
-        this.sendSocket({ type: 'init', protocolVersion: AGENT_PROTOCOL_VERSION, requestId: createId('init') })
+        this.connectionState = 'authenticating'
+        this.handshakeTimer = setTimeout(() => { this.connectionError = '登录验证超时，正在重新连接，草稿已保留。'; socket.close() }, 15000)
+        this.sendSocket({ type: 'init', protocolVersion: AGENT_PROTOCOL_VERSION, accessToken: token, requestId: createId('init') })
       }
 
       socket.onmessage = event => {
+        if (this.socketClient !== socket) return
+        if (this.connectionToken !== (getToken() || '')) {
+          this.handleIdentityChange()
+          return
+        }
         let message
         try {
           message = JSON.parse(String(event.data))
@@ -396,35 +679,60 @@ export default {
           this.pongTimer = null
           return
         }
+        if (['agent_start', 'text_delta', 'thinking_delta', 'tool_start', 'tool_update', 'tool_end', 'message_end', 'agent_end', 'session_updated'].includes(message.type)) {
+          this.queueAgentEvent(message)
+          return
+        }
+        this.flushAgentEvents()
         this.handleServerMessage(message)
       }
 
       socket.onerror = () => socket.close()
-      socket.onclose = () => {
+      socket.onclose = event => {
         if (this.socketClient !== socket) return
+        if (event.code === 4401 || event.code === 4403) {
+          this.authFailedToken = this.connectionToken
+          this.resetIdentityConnection()
+          this.connectionState = event.code === 4401 ? 'auth-expired' : 'forbidden'
+          return
+        }
+        this.flushAgentEvents()
+        this.clearPendingRequests('连接已中断，请恢复连接后重试。')
+        this.pendingLiveEvents = {}
+        this.latestLoadRequests = {}
         this.socketClient = null
         this.stopHeartbeat()
         this.clearPermissions()
         if (this.componentDestroyed) return
-        this.connectionState = 'reconnecting'
+        if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
+        this.handshakeTimer = null
+        this.connectionState = event.code === 1013 ? 'service-unavailable' : 'reconnecting'
         const delay = Math.min(15000, 800 * Math.pow(2, Math.min(this.reconnectAttempts++, 5))) + Math.random() * 350
         this.reconnectTimer = setTimeout(() => this.connectSocket(), delay)
       }
     },
     reconnectNow() {
       if (this.isConnected) return
-      if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
+      this.clearSocketTimers()
+      this.clearPendingRequests('连接正在重建，请稍后重试。')
       if (this.socketClient) {
         this.socketClient.onclose = null
         this.socketClient.close()
         this.socketClient = null
       }
       this.clearPermissions()
+      this.authFailedToken = ''
       this.reconnectAttempts = 0
       this.connectSocket()
     },
+    recoverConnection() {
+      if (this.connectionState === 'auth-expired') {
+        this.$router.push({ path: '/login', query: { redirect: this.$route.fullPath } })
+      } else this.reconnectNow()
+    },
     clearSocketTimers() {
+      if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
+      this.handshakeTimer = null
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
       this.stopHeartbeat()
       this.reconnectTimer = null
@@ -446,41 +754,110 @@ export default {
       this.pongTimer = null
     },
     sendSocket(message, notify = true) {
+      if (this.connectionToken !== (getToken() || '')) {
+        this.handleIdentityChange()
+        return false
+      }
       if (!this.socketClient || this.socketClient.readyState !== WebSocket.OPEN) {
         if (notify) this.$message.warning('Agent 尚未连接，请稍后重试')
         return false
       }
-      this.socketClient.send(JSON.stringify(message))
-      return true
+      try {
+        this.socketClient.send(JSON.stringify(message))
+        this.trackRequest(message)
+        return true
+      } catch (_) {
+        if (notify) this.$message.warning('消息未发出，连接正在恢复')
+        this.socketClient.close()
+        return false
+      }
     },
     handleServerMessage(message) {
+      const request = this.finishRequest(message.requestId)
       switch (message.type) {
         case 'init':
+          if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
+          this.handshakeTimer = null
+          this.reconnectAttempts = 0
+          this.connectionError = ''
+          this.connectionState = 'connected'
+          this.draftUserId = message.userId || String(this.$store && this.$store.state.user.id || '')
+          this.inputText = this.readDraft(this.activeSessionId)
+          this.startHeartbeat()
           this.sessions = Array.isArray(message.sessions) ? message.sessions : []
-          if (this.activeSessionId && this.sessions.some(item => item.id === this.activeSessionId)) {
+          this.nextSessionCursor = message.nextCursor || null
+          if (this.sessionQuery) this.requestSessions()
+          if (this.activeSessionId) {
             this.loadSession(this.activeSessionId)
-          } else if (this.sortedSessions.length) {
+          } else if (!this.inputText && this.sortedSessions.length) {
             this.selectSession(this.sortedSessions[0].id)
           } else {
             this.activeSessionId = null
           }
+          Object.keys(this.sessionStates).filter(id => id !== this.activeSessionId && this.sessionStates[id].isStreaming).forEach(id => this.loadSession(id))
           break
         case 'sessions':
-          this.sessions = Array.isArray(message.sessions) ? message.sessions : []
+          if (!request || request.query !== this.sessionQuery.trim() || message.requestId !== this.latestSessionRequestId) break
+          this.sessionsLoading = false
+          this.sessionsError = ''
+          this.sessions = request.cursor ? this.sessions : []
+          ;(message.sessions || []).forEach(summary => this.upsertSessionSummary(summary))
+          this.nextSessionCursor = message.nextCursor || null
           break
-        case 'session_created':
+        case 'session_created': {
+          if (message.requestId && !request) {
+            this.upsertSessionSummary(message.session.summary)
+            break
+          }
+          const draft = this.inputText
           this.creatingSession = false
           this.installSnapshot(message.session)
-          this.activeSessionId = message.session.summary.id
+          this.switchDraft(message.session.summary.id)
+          if (draft) this.inputText = draft
           if (this.pendingPrompt) {
             const prompt = this.pendingPrompt
             this.pendingPrompt = ''
-            this.$nextTick(() => this.sendPromptToActive(prompt))
+            try { window.sessionStorage.removeItem(draftKey(this.draftUserId, null)) } catch (_) { /* Optional local storage. */ }
+            this.$nextTick(() => this.sendPromptToActive(prompt, true))
           }
           break
+        }
         case 'session_state':
-          this.installSnapshot(message.session)
+          this.installSnapshot(message.session, message.requestId)
           break
+        case 'history_page': {
+          this.loadingOlder = false
+          const state = this.sessionStates[message.sessionId]
+          if (!state) break
+          const scroller = this.$refs && this.$refs.messageScroller
+          const height = scroller ? scroller.scrollHeight : 0
+          const top = scroller ? scroller.scrollTop : 0
+          const known = new Set(state.messages.map(item => item.id))
+          const combined = (message.messages || []).filter(item => !known.has(item.id)).map(this.normalizeMessage).concat(state.messages)
+          if (combined.length > MAX_VISIBLE_MESSAGES) state.hasNewer = true
+          combined.slice(MAX_VISIBLE_MESSAGES).forEach(item => item.tools.forEach(tool => this.$delete(this.expandedTools, tool.id)))
+          state.messages = combined.slice(0, MAX_VISIBLE_MESSAGES)
+          state.nextBefore = message.nextBefore || null
+          this.$nextTick(() => { if (scroller && this.activeSessionId === message.sessionId) scroller.scrollTop = top + scroller.scrollHeight - height })
+          break
+        }
+        case 'session_renamed': {
+          const summary = this.sessions.find(item => item.id === message.sessionId)
+          if (summary) this.upsertSessionSummary({ ...summary, title: message.title })
+          const state = this.sessionStates[message.sessionId]
+          if (state) state.summary.title = message.title
+          break
+        }
+        case 'prompt_accepted': {
+          const state = this.sessionStates[message.sessionId]
+          if (state) {
+            state.delivery = 'accepted'
+            state.sendError = ''
+            state.isStreaming = true
+          }
+          this.saveDraft()
+          break
+        }
         case 'session_deleted':
           this.removeSessionLocally(message.sessionId)
           break
@@ -508,15 +885,25 @@ export default {
           this.applyAgentEvent(message)
           break
         case 'error':
+          if (message.code === 'SERVICE_UNAVAILABLE') {
+            if (request) this.failRequest(request, message.message, request.type === 'prompt')
+            this.connectionError = message.message
+            this.connectionState = 'service-unavailable'
+            break
+          }
+          if (message.code === 'AUTH_REQUIRED' || message.code === 'FORBIDDEN') {
+            this.authFailedToken = this.connectionToken
+            this.resetIdentityConnection()
+            this.connectionState = message.code === 'AUTH_REQUIRED' ? 'auth-expired' : 'forbidden'
+            this.connectionError = message.message
+            this.$message.error(message.message || '登录已失效或无权访问 Agent 助手')
+            return
+          }
           if (message.requestId && message.requestId === this.permissionResponseRequestId) {
             this.permissionRespondingId = ''
             this.permissionResponseRequestId = ''
           }
-          this.creatingSession = false
-          if (this.pendingPrompt) {
-            this.inputText = this.pendingPrompt
-            this.pendingPrompt = ''
-          }
+          this.failRequest(request, message.message || '请求失败')
           this.$message.error(message.message || 'Agent 请求失败')
           break
         default:
@@ -534,9 +921,24 @@ export default {
         error: message.error || ''
       }
     },
-    installSnapshot(snapshot) {
+    installSnapshot(snapshot, requestId) {
       if (!snapshot || !snapshot.summary) return
+      const id = snapshot.summary.id
+      if (requestId && String(requestId).startsWith('load-') && this.latestLoadRequests[id] !== requestId) return
+      const existing = this.sessionStates[id]
+      if (snapshot.epoch && existing && existing.epoch === snapshot.epoch && existing.sequence > snapshot.sequence) {
+        this.$delete(this.loadingSessionIds, id)
+        delete this.latestLoadRequests[id]
+        this.replayLiveEvents(id)
+        return
+      }
       const messages = Array.isArray(snapshot.messages) ? snapshot.messages.map(this.normalizeMessage) : []
+      if (!snapshot.isStreaming) messages.forEach(message => message.tools.forEach(tool => {
+        if (tool.status === 'running') {
+          tool.status = 'error'
+          tool.output = tool.output || '执行已中断，没有收到完整的工具结果。'
+        }
+      }))
       let streamMessageId = ''
       const lastMessage = messages[messages.length - 1]
       if (snapshot.isStreaming && lastMessage && lastMessage.role === 'assistant') {
@@ -550,23 +952,83 @@ export default {
         isStreaming: Boolean(snapshot.isStreaming),
         streamMessageId,
         contextUsage: snapshot.contextUsage || null,
-        primaryAgentId: snapshot.primaryAgentId || 'general'
+        primaryAgentId: snapshot.primaryAgentId || 'general',
+        nextBefore: snapshot.nextBefore || null,
+        hasNewer: false,
+        lastAccessAt: Date.now(),
+        phase: snapshot.phase || 'waiting',
+        startedAt: snapshot.startedAt || '',
+        lastPrompt: (messages.slice().reverse().find(message => message.role === 'user') || {}).text || '',
+        sendError: '',
+        delivery: '',
+        optimisticId: '',
+        stopRequested: false,
+        epoch: snapshot.epoch || '',
+        sequence: snapshot.sequence === undefined ? 0 : snapshot.sequence
+      }
+      const previous = this.sessionStates[snapshot.summary.id]
+      if (previous && ['unknown', 'rejected'].includes(previous.delivery)) {
+        state.lastPrompt = previous.lastPrompt
+        state.delivery = snapshot.isStreaming ? 'accepted' : previous.delivery
+        state.sendError = snapshot.isStreaming ? '' : previous.sendError
+      }
+      const last = messages[messages.length - 1]
+      if (!snapshot.isStreaming && last && last.error) {
+        const question = [...messages].reverse().find(item => item.role === 'user')
+        state.lastPrompt = question ? question.text : ''
+        state.delivery = 'accepted'
+        state.sendError = last.error
       }
       this.$set(this.sessionStates, snapshot.summary.id, state)
       this.$delete(this.loadingSessionIds, snapshot.summary.id)
+      delete this.latestLoadRequests[id]
+      this.$delete(this.historyErrors, snapshot.summary.id)
       this.upsertSessionSummary(snapshot.summary)
-      this.$nextTick(() => this.scrollToBottom(true))
+      this.evictSessionCache()
+      this.replayLiveEvents(id)
+      if (snapshot.summary.id === this.activeSessionId) this.$nextTick(() => this.scrollToBottom(true))
     },
     upsertSessionSummary(summary) {
       const index = this.sessions.findIndex(item => item.id === summary.id)
       if (index >= 0) this.$set(this.sessions, index, { ...this.sessions[index], ...summary })
       else this.sessions.push({ ...summary })
     },
-    applyAgentEvent(event) {
+    replayLiveEvents(sessionId) {
+      const pending = this.pendingLiveEvents[sessionId] || []
+      delete this.pendingLiveEvents[sessionId]
+      const state = this.sessionStates[sessionId]
+      if (!state || !pending.length) return
+      const latest = pending[pending.length - 1]
+      if (latest.epoch && state.epoch !== latest.epoch) {
+        this.pendingLiveEvents[sessionId] = pending
+        this.loadSession(sessionId)
+        return
+      }
+      pending.filter(event => !event.epoch || event.epoch === state.epoch).forEach(event => this.applyAgentEvent(event, true))
+    },
+    applyAgentEvent(event, replaying = false) {
+      const current = this.sessionStates[event.sessionId]
+      if (current && event.epoch && Number.isInteger(event.sequence)) {
+        if (current.epoch === event.epoch && event.sequence <= current.sequence) return
+        if ((!replaying && this.loadingSessionIds[event.sessionId]) || current.epoch !== event.epoch || event.sequence > current.sequence + 1) {
+          this.bufferLiveEvent(event)
+          return
+        }
+        current.epoch = event.epoch
+        current.sequence = event.sequence
+      }
       if (event.type === 'session_updated' && event.summary) this.upsertSessionSummary(event.summary)
       const state = this.sessionStates[event.sessionId]
       if (!state) {
-        if (!this.loadingSessionIds[event.sessionId]) this.loadSession(event.sessionId)
+        if (event.sessionId === this.activeSessionId) this.bufferLiveEvent(event)
+        return
+      }
+      if (state.hasNewer && !['agent_end', 'session_updated'].includes(event.type)) {
+        if (event.type === 'agent_start') {
+          state.isStreaming = true
+          state.startedAt = new Date().toISOString()
+          state.phase = 'waiting'
+        }
         return
       }
 
@@ -574,21 +1036,26 @@ export default {
       switch (event.type) {
         case 'agent_start':
           state.isStreaming = true
+          state.phase = 'waiting'
+          state.startedAt = state.startedAt || new Date().toISOString()
           break
         case 'text_delta': {
           state.isStreaming = true
+          state.phase = 'answering'
           const assistant = this.ensureAssistantMessage(state)
           assistant.text += event.delta || ''
           break
         }
         case 'thinking_delta': {
           state.isStreaming = true
+          state.phase = 'thinking'
           const assistant = this.ensureAssistantMessage(state)
           assistant.thinking += event.delta || ''
           break
         }
         case 'tool_start': {
           state.isStreaming = true
+          state.phase = 'tool'
           const assistant = this.ensureAssistantMessage(state)
           this.upsertTool(assistant, event.tool)
           break
@@ -601,22 +1068,41 @@ export default {
           if (tool) {
             if (event.output !== undefined) this.$set(tool, 'output', event.output)
             if (event.type === 'tool_end') this.$set(tool, 'status', event.isError ? 'error' : 'done')
+            if (event.durationMs !== undefined) this.$set(tool, 'durationMs', event.durationMs)
+            if (event.type === 'tool_end') state.phase = state.messages.some(message => message.tools.some(item => item.status === 'running')) ? 'tool' : 'waiting'
           }
           break
         }
         case 'message_end':
           this.finishMessage(state, event.message)
           break
-        case 'agent_end':
+        case 'agent_end': {
+          const stopped = state.stopRequested
           state.isStreaming = false
+          state.stopRequested = false
           state.streamMessageId = ''
+          state.messages.forEach(message => message.tools.forEach(tool => {
+            if (tool.status === 'running') {
+              tool.status = 'error'
+              tool.output = tool.output || '执行已结束，没有收到完整的工具结果。'
+            }
+          }))
           if (event.contextUsage) state.contextUsage = event.contextUsage
           if (event.error) {
-            const assistant = this.findLastAssistant(state.messages)
-            if (assistant) this.$set(assistant, 'error', event.error)
-            else state.messages.push(this.normalizeMessage({ role: 'assistant', error: event.error }))
+            state.sendError = event.error
+            if (state.delivery !== 'rejected' && !state.hasNewer) {
+              state.delivery = 'accepted'
+              const last = state.messages[state.messages.length - 1]
+              if (last && last.role === 'assistant') this.$set(last, 'error', event.error)
+              else state.messages.push(this.normalizeMessage({ role: 'assistant', error: event.error }))
+            }
+          } else {
+            state.sendError = stopped ? '已停止生成，可以重新提问。' : ''
+            state.delivery = 'accepted'
           }
+          this.evictSessionCache()
           break
+        }
         case 'session_updated':
           if (event.summary) state.summary = { ...event.summary }
           if (event.model) state.model = event.model
@@ -628,7 +1114,13 @@ export default {
           break
       }
 
-      if (shouldStick || event.type === 'agent_start') this.$nextTick(() => this.scrollToBottom(true))
+      if (state.messages.length > MAX_VISIBLE_MESSAGES) {
+        state.messages.slice(0, -MAX_VISIBLE_MESSAGES).forEach(message => message.tools.forEach(tool => this.$delete(this.expandedTools, tool.id)))
+        state.messages = state.messages.slice(-MAX_VISIBLE_MESSAGES)
+        state.nextBefore = state.messages[0].id
+      }
+
+      if (shouldStick) this.$nextTick(() => this.scrollToBottom())
     },
     ensureAssistantMessage(state) {
       let message = state.streamMessageId ? state.messages.find(item => item.id === state.streamMessageId) : null
@@ -678,22 +1170,32 @@ export default {
       return null
     },
     startNewConversation() {
-      this.activeSessionId = null
+      if (this.creatingSession) return
+      this.switchDraft(null)
       this.pendingPrompt = ''
       this.mobileSidebarOpen = false
       this.$nextTick(() => this.focusComposer())
     },
     selectSession(sessionId) {
-      this.activeSessionId = sessionId
+      this.switchDraft(sessionId)
+      if (this.sessionStates[sessionId]) this.sessionStates[sessionId].lastAccessAt = Date.now()
       this.mobileSidebarOpen = false
       this.loadSession(sessionId)
       this.$nextTick(() => this.scrollToBottom(true))
     },
     loadSession(sessionId) {
       if (!sessionId || this.loadingSessionIds[sessionId]) return
+      if (!this.isConnected) {
+        this.$set(this.historyErrors, sessionId, '连接恢复后可重新载入历史消息。')
+        return
+      }
       this.$set(this.loadingSessionIds, sessionId, true)
-      if (!this.sendSocket({ type: 'load_session', sessionId, requestId: createId('load') })) {
+      this.$delete(this.historyErrors, sessionId)
+      const requestId = createId('load')
+      this.latestLoadRequests[sessionId] = requestId
+      if (!this.sendSocket({ type: 'load_session', sessionId, requestId })) {
         this.$delete(this.loadingSessionIds, sessionId)
+        delete this.latestLoadRequests[sessionId]
       }
     },
     submitPrompt() {
@@ -712,25 +1214,39 @@ export default {
       }
       this.sendPromptToActive(prompt)
     },
-    sendPromptToActive(prompt) {
+    sendPromptToActive(prompt, preserveDraft = false) {
       const state = this.activeState
       if (!state || state.isStreaming) return
-      if (!this.sendSocket({ type: 'prompt', sessionId: this.activeSessionId, text: prompt, stockAccessToken: getToken(), requestId: createId('prompt') })) return
+      if (this.loadingSessionIds[this.activeSessionId]) { this.$message.warning('正在同步对话，请稍后发送'); return }
+      if (state.hasNewer) {
+        this.$message.warning('请先回到最新消息，再继续提问')
+        return
+      }
+      const requestId = createId('prompt')
+      if (!this.sendSocket({ type: 'prompt', sessionId: this.activeSessionId, text: prompt, requestId })) return
+      state.optimisticId = createId('optimistic')
       state.messages.push(this.normalizeMessage({
-        id: createId('optimistic'),
+        id: state.optimisticId,
         role: 'user',
         text: prompt,
         timestamp: new Date().toISOString()
       }))
       state.isStreaming = true
+      state.phase = 'waiting'
+      state.startedAt = new Date().toISOString()
+      state.lastPrompt = prompt
+      state.sendError = ''
+      state.delivery = 'sending'
       if (!state.summary.title) state.summary.title = prompt.slice(0, 48)
-      this.inputText = ''
+      if (!preserveDraft) this.inputText = ''
+      this.saveDraft()
       this.userPinnedScroll = false
       this.$nextTick(() => this.scrollToBottom(true))
     },
     abortGeneration() {
       if (!this.activeSessionId) return
-      this.sendSocket({ type: 'abort', sessionId: this.activeSessionId, requestId: createId('abort') })
+      if (this.activeState && this.activeState.stopRequested) return
+      if (this.sendSocket({ type: 'abort', sessionId: this.activeSessionId, requestId: createId('abort') }) && this.activeState) this.activeState.stopRequested = true
     },
     handleComposerEnter(event) {
       if (event.isComposing || event.shiftKey) return
@@ -738,6 +1254,7 @@ export default {
       this.submitPrompt()
     },
     handleGlobalShortcut(event) {
+      if (event.key === 'Escape') this.mobileSidebarOpen = false
       if ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'n') {
         event.preventDefault()
         this.startNewConversation()
@@ -763,10 +1280,14 @@ export default {
       this.sessions = this.sessions.filter(item => item.id !== sessionId)
       this.$delete(this.sessionStates, sessionId)
       this.$delete(this.loadingSessionIds, sessionId)
+      this.$delete(this.historyErrors, sessionId)
+      delete this.latestLoadRequests[sessionId]
+      delete this.pendingLiveEvents[sessionId]
       if (this.activeSessionId === sessionId) {
-        this.activeSessionId = null
+        this.switchDraft(null)
         if (this.sortedSessions.length) this.selectSession(this.sortedSessions[0].id)
       }
+      try { if (this.draftUserId) window.sessionStorage.removeItem(draftKey(this.draftUserId, sessionId)) } catch (_) { /* Optional local storage. */ }
     },
     isMessageStreaming(message) {
       return Boolean(this.activeState && this.activeState.isStreaming && this.activeState.streamMessageId === message.id)
@@ -865,1047 +1386,4 @@ export default {
 }
 </script>
 
-<style lang="scss" scoped>
-.agent-chat-page {
-  --agent-accent: #f07b3f;
-  --agent-accent-dark: #d85d25;
-  --agent-ink: #202123;
-  --agent-muted: #6f737a;
-  --agent-line: #e7e7e5;
-  display: flex;
-  width: 100%;
-  height: calc(100vh - 84px);
-  min-height: 560px;
-  overflow: hidden;
-  background: #fff;
-  color: var(--agent-ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-
-  * {
-    box-sizing: border-box;
-  }
-
-  button {
-    font-family: inherit;
-  }
-}
-
-.agent-sidebar {
-  position: relative;
-  z-index: 4;
-  display: flex;
-  flex: 0 0 272px;
-  flex-direction: column;
-  width: 272px;
-  min-width: 0;
-  border-right: 1px solid #e8e8e6;
-  background: #f7f7f5;
-}
-
-.agent-brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  height: 68px;
-  padding: 0 18px;
-}
-
-.agent-brand__mark,
-.agent-welcome__mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  background: linear-gradient(145deg, #ffad68, var(--agent-accent) 58%, #d95725);
-  box-shadow: 0 7px 18px rgba(221, 93, 36, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.45);
-}
-
-.agent-brand__mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  font-size: 18px;
-}
-
-.agent-brand__copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.agent-brand__copy strong {
-  overflow: hidden;
-  color: #252525;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-brand__copy span {
-  margin-top: 2px;
-  color: #a0a09b;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-.agent-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 9px;
-  outline: none;
-  background: transparent;
-  color: #6f737a;
-  cursor: pointer;
-
-  &:hover {
-    background: #f1f1ef;
-    color: #222;
-  }
-}
-
-.agent-sidebar__close,
-.agent-topbar__menu {
-  display: none;
-  width: 34px;
-  height: 34px;
-}
-
-.agent-new-chat {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 8px 12px 16px;
-  padding: 11px 12px;
-  border: 1px solid #dfdfdc;
-  border-radius: 11px;
-  outline: none;
-  background: rgba(255, 255, 255, 0.72);
-  color: #333;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
-
-  &:hover:not(:disabled) {
-    border-color: #d0d0cc;
-    background: #fff;
-    box-shadow: 0 4px 15px rgba(31, 31, 28, 0.06);
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-}
-
-.agent-new-chat__shortcut {
-  margin-left: auto;
-  color: #aaa9a4;
-  font-size: 10px;
-  font-weight: 500;
-}
-
-.agent-session-section {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  padding: 0 9px;
-}
-
-.agent-section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px 7px;
-  color: #aaa9a4;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.agent-session-list {
-  min-height: 0;
-  flex: 1;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.agent-session-empty {
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  gap: 9px;
-  padding: 38px 10px;
-  color: #b0afaa;
-  font-size: 12px;
-
-  i {
-    font-size: 23px;
-  }
-}
-
-.agent-session-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-bottom: 2px;
-  border-radius: 10px;
-  transition: background 0.16s;
-
-  &:hover {
-    background: #eeeeeb;
-  }
-
-  &.is-active {
-    background: #e9e9e5;
-  }
-}
-
-.agent-session-item__main {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 10px 34px 10px 10px;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: #777772;
-  text-align: left;
-  cursor: pointer;
-
-  > i {
-    flex: 0 0 auto;
-    margin-top: 2px;
-    font-size: 14px;
-  }
-}
-
-.agent-session-item.is-active .agent-session-item__main > i {
-  color: var(--agent-accent-dark);
-}
-
-.agent-session-item__text {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-
-  strong {
-    overflow: hidden;
-    color: #494946;
-    font-size: 12px;
-    font-weight: 550;
-    line-height: 17px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  small {
-    color: #aaa9a4;
-    font-size: 10px;
-  }
-}
-
-.agent-session-item.is-active .agent-session-item__text strong {
-  color: #242422;
-  font-weight: 650;
-}
-
-.agent-session-item__delete {
-  position: absolute;
-  top: 50%;
-  right: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  outline: none;
-  background: transparent;
-  color: #aaa9a4;
-  cursor: pointer;
-  opacity: 0;
-  transform: translateY(-50%);
-
-  &:hover {
-    background: rgba(222, 58, 58, 0.08);
-    color: #d84d4d;
-  }
-}
-
-.agent-session-item:hover .agent-session-item__delete,
-.agent-session-item:focus-within .agent-session-item__delete {
-  opacity: 1;
-}
-
-.agent-sidebar__footer {
-  padding: 12px 14px 14px;
-  border-top: 1px solid #e6e6e2;
-}
-
-.agent-connection {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 2px;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: #767670;
-  font-size: 11px;
-  text-align: left;
-  cursor: pointer;
-
-  i {
-    margin-left: auto;
-  }
-}
-
-.agent-connection__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #bbb;
-
-  &.is-connected {
-    background: #34b774;
-    box-shadow: 0 0 0 3px rgba(52, 183, 116, 0.12);
-  }
-
-  &.is-connecting,
-  &.is-reconnecting {
-    background: #f0a24a;
-    animation: agent-pulse 1.3s infinite;
-  }
-}
-
-.agent-endpoint {
-  display: block;
-  overflow: hidden;
-  margin: 5px 0 0 17px;
-  color: #b5b4af;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-main {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  background:
-    radial-gradient(circle at 74% 8%, rgba(255, 225, 204, 0.2), transparent 24%),
-    #fff;
-}
-
-.agent-topbar {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  flex: 0 0 60px;
-  align-items: center;
-  gap: 12px;
-  height: 60px;
-  padding: 0 24px;
-  border-bottom: 1px solid rgba(231, 231, 229, 0.9);
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-
-.agent-topbar__title {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-
-  strong {
-    overflow: hidden;
-    color: #292929;
-    font-size: 13px;
-    font-weight: 650;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  span {
-    margin-top: 2px;
-    overflow: hidden;
-    color: #9a9a95;
-    font-size: 10px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.agent-topbar__status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 9px;
-  border: 1px solid #e8e8e5;
-  border-radius: 999px;
-  color: #969691;
-  font-size: 10px;
-
-  > span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #bbb;
-  }
-
-  &.is-online > span {
-    background: #34b774;
-  }
-}
-
-.agent-connection-banner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 7px 16px;
-  border-bottom: 1px solid #f2dfc5;
-  background: #fff8ee;
-  color: #946425;
-  font-size: 11px;
-
-  button {
-    padding: 0;
-    border: 0;
-    border-bottom: 1px solid currentColor;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-  }
-}
-
-.agent-conversation {
-  position: relative;
-  min-height: 0;
-  flex: 1;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.agent-session-loading {
-  display: flex;
-  height: 100%;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  color: #989893;
-  font-size: 12px;
-}
-
-.agent-welcome {
-  display: flex;
-  width: min(680px, calc(100% - 40px));
-  min-height: 100%;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  margin: 0 auto;
-  padding: 48px 0 36px;
-  text-align: center;
-}
-
-.agent-welcome__mark {
-  width: 50px;
-  height: 50px;
-  margin-bottom: 22px;
-  border-radius: 17px;
-  font-size: 25px;
-}
-
-.agent-welcome h1 {
-  margin: 0;
-  color: #242424;
-  font-size: 27px;
-  font-weight: 680;
-  letter-spacing: -0.035em;
-}
-
-.agent-welcome > p {
-  max-width: 520px;
-  margin: 10px auto 28px;
-  color: #858580;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.agent-suggestions {
-  display: grid;
-  width: 100%;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-
-  button {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 11px;
-    padding: 14px;
-    border: 1px solid #e8e8e5;
-    border-radius: 14px;
-    outline: none;
-    background: rgba(250, 250, 248, 0.76);
-    text-align: left;
-    cursor: pointer;
-    transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s, background 0.18s;
-
-    &:hover {
-      border-color: #dadad6;
-      background: #fff;
-      box-shadow: 0 9px 28px rgba(35, 35, 30, 0.07);
-      transform: translateY(-1px);
-    }
-
-    > span:nth-child(2) {
-      display: flex;
-      min-width: 0;
-      flex: 1;
-      flex-direction: column;
-      gap: 3px;
-    }
-
-    strong {
-      color: #3e3e3b;
-      font-size: 12px;
-      font-weight: 650;
-    }
-
-    small {
-      overflow: hidden;
-      color: #9a9a95;
-      font-size: 10px;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-}
-
-.agent-suggestions__icon {
-  display: flex;
-  flex: 0 0 34px;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: #fff1e7;
-  color: var(--agent-accent-dark);
-  font-size: 15px;
-}
-
-.agent-suggestions__arrow {
-  color: #c3c2bd;
-  font-size: 11px;
-}
-
-.agent-message-list {
-  width: min(780px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: 22px 0 40px;
-}
-
-.agent-message {
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  padding: 14px 0;
-
-  &.is-user {
-    justify-content: flex-end;
-  }
-}
-
-.agent-message__avatar {
-  display: flex;
-  flex: 0 0 30px;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  margin-top: 1px;
-  border: 1px solid #e6e6e3;
-  border-radius: 10px;
-  background: #fafaf8;
-  color: #777;
-  font-size: 13px;
-}
-
-.agent-message.is-assistant .agent-message__avatar {
-  border-color: #f5d4bf;
-  background: #fff2e9;
-  color: var(--agent-accent-dark);
-  font-size: 15px;
-}
-
-.agent-message.is-user .agent-message__avatar {
-  order: 2;
-  border: 0;
-  background: #e9e9e6;
-  color: #686864;
-}
-
-.agent-message__body {
-  min-width: 0;
-  max-width: calc(100% - 44px);
-  flex: 1;
-}
-
-.agent-message.is-user .agent-message__body {
-  display: flex;
-  max-width: min(76%, 620px);
-  flex: 0 1 auto;
-  align-items: flex-end;
-  flex-direction: column;
-}
-
-.agent-message__author {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0 0 7px;
-  color: #454542;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.agent-typing-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--agent-accent);
-  animation: agent-pulse 1.2s ease-in-out infinite;
-}
-
-.agent-user-bubble {
-  padding: 10px 14px;
-  border-radius: 16px 16px 4px 16px;
-  background: #30302e;
-  box-shadow: 0 4px 12px rgba(25, 25, 24, 0.08);
-  color: #fff;
-  font-size: 13px;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.agent-tool {
-  width: min(100%, 620px);
-  margin: 7px 0;
-  overflow: hidden;
-  border: 1px solid #e9e8e4;
-  border-radius: 10px;
-  background: #fafaf8;
-
-  > button {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
-    border: 0;
-    outline: none;
-    background: transparent;
-    color: #5f5f5a;
-    font-size: 11px;
-    text-align: left;
-    cursor: pointer;
-
-    > i:last-child {
-      color: #aaa;
-      font-size: 9px;
-    }
-  }
-}
-
-.agent-tool__status {
-  display: flex;
-  width: 19px;
-  height: 19px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background: #eaf5ee;
-  color: #36a36c;
-  font-size: 10px;
-}
-
-.agent-tool.is-running .agent-tool__status {
-  background: #fff0e5;
-  color: var(--agent-accent-dark);
-}
-
-.agent-tool.is-error .agent-tool__status {
-  background: #fdeaea;
-  color: #d95050;
-}
-
-.agent-tool__name {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-tool__state {
-  color: #a3a29d;
-  font-size: 10px;
-}
-
-.agent-tool__details {
-  padding: 0 10px 10px 37px;
-
-  > div + div {
-    margin-top: 8px;
-  }
-
-  strong {
-    color: #91908b;
-    font-size: 9px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  pre {
-    max-height: 220px;
-    margin: 5px 0 0;
-    overflow: auto;
-    padding: 9px;
-    border-radius: 7px;
-    background: #f0f0ed;
-    color: #555550;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 10px;
-    line-height: 1.55;
-    white-space: pre-wrap;
-  }
-}
-
-.agent-message__error {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin-top: 9px;
-  padding: 9px 11px;
-  border: 1px solid #f1caca;
-  border-radius: 9px;
-  background: #fff3f3;
-  color: #bb4848;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.agent-message__actions {
-  height: 24px;
-  margin-top: 5px;
-  opacity: 0;
-  transition: opacity 0.15s;
-
-  button {
-    padding: 3px 5px;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    color: #9c9b96;
-    font-size: 10px;
-    cursor: pointer;
-
-    &:hover {
-      background: #f4f4f1;
-      color: #555;
-    }
-  }
-}
-
-.agent-message:hover .agent-message__actions,
-.agent-message:focus-within .agent-message__actions {
-  opacity: 1;
-}
-
-.agent-typing {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 25px;
-
-  span {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #9e9b96;
-    animation: agent-typing 1.2s infinite ease-in-out;
-
-    &:nth-child(2) { animation-delay: 0.14s; }
-    &:nth-child(3) { animation-delay: 0.28s; }
-  }
-}
-
-.agent-composer-area {
-  position: relative;
-  z-index: 2;
-  flex: 0 0 auto;
-  padding: 8px max(22px, calc((100% - 780px) / 2)) 13px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #fff 22%, #fff 100%);
-}
-
-.agent-composer {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 10px 10px 10px 15px;
-  border: 1px solid #dededb;
-  border-radius: 17px;
-  background: #fff;
-  box-shadow: 0 7px 25px rgba(31, 31, 28, 0.08), 0 1px 2px rgba(31, 31, 28, 0.03);
-  transition: border-color 0.18s, box-shadow 0.18s;
-
-  &.is-focused {
-    border-color: #cac9c5;
-    box-shadow: 0 8px 28px rgba(31, 31, 28, 0.1), 0 0 0 3px rgba(240, 123, 63, 0.07);
-  }
-
-  &.is-disabled {
-    background: #fafaf8;
-    box-shadow: none;
-  }
-}
-
-.agent-composer__input {
-  min-width: 0;
-  flex: 1;
-
-  ::v-deep .el-textarea__inner {
-    min-height: 27px !important;
-    padding: 3px 0 2px;
-    border: 0;
-    outline: none;
-    background: transparent;
-    box-shadow: none;
-    color: #2c2c2a;
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1.6;
-
-    &::placeholder {
-      color: #aaa9a5;
-    }
-  }
-}
-
-.agent-composer__send {
-  display: flex;
-  flex: 0 0 34px;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  border-radius: 11px;
-  outline: none;
-  background: #30302e;
-  color: #fff;
-  cursor: pointer;
-  transition: background 0.16s, transform 0.16s, opacity 0.16s;
-
-  &:hover:not(:disabled) {
-    background: #181817;
-    transform: translateY(-1px);
-  }
-
-  &:disabled {
-    background: #e4e4e1;
-    color: #aaa9a5;
-    cursor: not-allowed;
-  }
-
-  &.is-stop {
-    background: #3d3d3a;
-  }
-
-  &.is-stop span {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    background: #fff;
-  }
-}
-
-.agent-composer__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 7px 3px 0;
-  color: #aaa9a5;
-  font-size: 9px;
-}
-
-.agent-sidebar-mask {
-  display: none;
-}
-
-@keyframes agent-typing {
-  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-3px); }
-}
-
-@keyframes agent-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
-
-@media (hover: none) {
-  .agent-session-item__delete,
-  .agent-message__actions {
-    opacity: 1;
-  }
-}
-
-@media (max-width: 900px) {
-  .agent-chat-page {
-    height: calc(100vh - 84px);
-    height: calc(100dvh - 84px);
-    min-height: 480px;
-  }
-
-  .agent-sidebar {
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: min(292px, 84vw);
-    transform: translateX(-102%);
-    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-
-    &.is-mobile-open {
-      transform: translateX(0);
-      box-shadow: 16px 0 40px rgba(20, 20, 18, 0.18);
-    }
-  }
-
-  .agent-sidebar-mask {
-    position: absolute;
-    inset: 0;
-    z-index: 3;
-    display: block;
-    background: rgba(20, 20, 18, 0.32);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-  }
-
-  .agent-sidebar__close,
-  .agent-topbar__menu {
-    display: inline-flex;
-  }
-
-  .agent-topbar {
-    padding: 0 15px;
-  }
-
-  .agent-message-list {
-    width: calc(100% - 28px);
-  }
-
-  .agent-composer-area {
-    padding-right: 14px;
-    padding-left: 14px;
-  }
-}
-
-@media (max-width: 600px) {
-  .agent-welcome {
-    width: calc(100% - 28px);
-    justify-content: flex-start;
-    padding-top: 54px;
-  }
-
-  .agent-welcome h1 {
-    font-size: 24px;
-  }
-
-  .agent-welcome > p {
-    margin-bottom: 22px;
-  }
-
-  .agent-suggestions {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-suggestions button:nth-child(n + 4) {
-    display: none;
-  }
-
-  .agent-message-list {
-    padding-top: 12px;
-  }
-
-  .agent-message {
-    gap: 9px;
-  }
-
-  .agent-message__avatar {
-    flex-basis: 27px;
-    width: 27px;
-    height: 27px;
-    border-radius: 9px;
-  }
-
-  .agent-message__body {
-    max-width: calc(100% - 36px);
-  }
-
-  .agent-message.is-user .agent-message__body {
-    max-width: 84%;
-  }
-
-  .agent-composer__meta span:first-child {
-    display: none;
-  }
-
-  .agent-composer__meta {
-    justify-content: center;
-    text-align: center;
-  }
-
-  .agent-topbar__status {
-    padding: 5px 7px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-typing span,
-  .agent-typing-dot,
-  .agent-connection__dot {
-    animation: none !important;
-  }
-}
-</style>
+<style lang="scss" scoped src="./chat.scss" />

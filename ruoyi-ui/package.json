@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vue-cli-service serve",
     "test:agent-chat": "node --test tests/agent-chat-rich-content.test.cjs",
+    "test:agent-chat:visual": "node tests/agent-chat-visual.cjs",
     "test:stock-expand": "node tests/stock-analysis-expand-toggle.test.js",
     "test:position-remove": "node tests/position-remove.test.js",
     "test:stock-kline": "node tests/stock-kline-chart.test.js",

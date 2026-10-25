@@ -26,7 +26,9 @@ function finishedMessage(active: ActiveSession, raw: unknown): ChatMessage | und
   const index = active.session.messages.lastIndexOf(raw as never);
   const role = raw && typeof raw === "object" && "role" in raw ? raw.role : undefined;
   if (index < 0 || (role !== "user" && role !== "assistant")) return undefined;
-  return convertMessages(active.session.messages.slice(0, index + 1)).at(-1);
+  let start = index;
+  while (start > 0 && active.session.messages[start].role !== "user") start--;
+  return convertMessages(active.session.messages.slice(start, index + 1), start).at(-1);
 }
 
 export function attachEventRelay(
@@ -39,10 +41,15 @@ export function attachEventRelay(
   let hasThinking = false;
   let textBoundary = false;
   let thinkingBoundary = false;
+  const toolStarts = new Map<string, number>();
   active.unsubscribe = active.session.subscribe((event: AgentSessionEvent) => {
     try {
       switch (event.type) {
         case "agent_start":
+          active.pendingAssistant = undefined;
+          active.toolProgress = new Map();
+          toolStarts.clear();
+          active.phase = "waiting";
           hasText = false;
           hasThinking = false;
           textBoundary = false;
@@ -51,22 +58,29 @@ export function attachEventRelay(
           break;
         case "message_start":
           if (event.message.role === "assistant") {
+            active.pendingAssistant = event.message;
             textBoundary = hasText;
             thinkingBoundary = hasThinking;
           }
           break;
         case "message_update":
+          active.pendingAssistant = event.message;
           if (event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) {
+            active.phase = "answering";
             send({ type: "text_delta", sessionId: active.id, delta: `${textBoundary ? "\n\n" : ""}${event.assistantMessageEvent.delta}` });
             textBoundary = false;
             hasText = true;
           } else if (event.assistantMessageEvent.type === "thinking_delta" && event.assistantMessageEvent.delta) {
+            active.phase = "thinking";
             send({ type: "thinking_delta", sessionId: active.id, delta: `${thinkingBoundary ? "\n\n" : ""}${event.assistantMessageEvent.delta}` });
             thinkingBoundary = false;
             hasThinking = true;
           }
           break;
         case "tool_execution_start":
+          active.phase = "tool";
+          toolStarts.set(event.toolCallId, Date.now());
+          active.toolProgress?.set(event.toolCallId, { status: "running", startedAt: new Date().toISOString() });
           send({
             type: "tool_start",
             sessionId: active.id,
@@ -75,10 +89,12 @@ export function attachEventRelay(
               name: event.toolName,
               input: event.args,
               status: "running",
+              startedAt: new Date().toISOString(),
             },
           });
           break;
         case "tool_execution_update":
+          active.toolProgress?.set(event.toolCallId, { ...active.toolProgress.get(event.toolCallId), output: resultText(event.partialResult) });
           send({
             type: "tool_update",
             sessionId: active.id,
@@ -87,15 +103,23 @@ export function attachEventRelay(
           });
           break;
         case "tool_execution_end":
+          active.toolProgress?.set(event.toolCallId, {
+            status: event.isError ? "error" : "done", output: resultText(event.result),
+            durationMs: toolStarts.has(event.toolCallId) ? Date.now() - toolStarts.get(event.toolCallId)! : undefined,
+          });
           send({
             type: "tool_end",
             sessionId: active.id,
             toolCallId: event.toolCallId,
             output: resultText(event.result),
             isError: event.isError,
+            durationMs: toolStarts.has(event.toolCallId) ? Date.now() - toolStarts.get(event.toolCallId)! : undefined,
           });
+          toolStarts.delete(event.toolCallId);
+          if (!toolStarts.size) active.phase = "waiting";
           break;
         case "message_end": {
+          if (event.message.role === "assistant") active.pendingAssistant = undefined;
           const message = finishedMessage(active, event.message);
           if (!message) break;
           if (message.role === "assistant") {

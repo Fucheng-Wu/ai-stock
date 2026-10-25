@@ -1,5 +1,6 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ChatMessage, ContextUsage, ToolCall } from "../../../shared/types.js";
+import type { ActiveSession } from "./types.js";
 
 type RecordLike = Record<string, unknown>;
 
@@ -42,7 +43,7 @@ function toolOutput(value: unknown): string {
 }
 
 /** Builds a transcript from the current Pi branch, joining tool results to their calls. */
-export function convertMessages(messages: readonly unknown[]): ChatMessage[] {
+export function convertMessages(messages: readonly unknown[], offset = 0): ChatMessage[] {
   const converted: ChatMessage[] = [];
   const tools = new Map<string, ToolCall>();
   let assistantTurn: ChatMessage | undefined;
@@ -50,7 +51,7 @@ export function convertMessages(messages: readonly unknown[]): ChatMessage[] {
   messages.forEach((raw, index) => {
     const item = record(raw);
     if (!item) return;
-    const id = string(item.id) ?? `message-${index}`;
+    const id = string(item.id) ?? `message-${index + offset}`;
     const at = timestamp(item.timestamp);
 
     if (item.role === "user") {
@@ -71,10 +72,11 @@ export function convertMessages(messages: readonly unknown[]): ChatMessage[] {
         else if (block.type === "thinking") thinking.push(string(block.thinking) ?? "");
         else if (block.type === "toolCall") {
           const call: ToolCall = {
-            id: string(block.id) ?? `tool-${index}-${calls.length}`,
+            id: string(block.id) ?? `tool-${index + offset}-${calls.length}`,
             name: string(block.name) ?? "tool",
             input: block.arguments,
             status: "running",
+            startedAt: at,
           };
           calls.push(call);
           tools.set(call.id, call);
@@ -106,6 +108,7 @@ export function convertMessages(messages: readonly unknown[]): ChatMessage[] {
       if (call) {
         call.output = output;
         call.status = item.isError === true ? "error" : "done";
+        if (typeof item.durationMs === "number") call.durationMs = item.durationMs;
       } else if (output) {
         assistantTurn = undefined;
         converted.push({ id, role: "tool", text: output, timestamp: at });
@@ -119,6 +122,25 @@ export function convertMessages(messages: readonly unknown[]): ChatMessage[] {
 export function titleFromMessages(messages: readonly ChatMessage[]): string {
   const first = messages.find((message) => message.role === "user" && message.text.trim());
   return first ? first.text.replace(/\s+/g, " ").trim().slice(0, 64) : "新对话";
+}
+
+/** Include the in-flight assistant and tool progress in reconnect snapshots. */
+export function convertActiveMessages(active: Pick<ActiveSession, "session" | "pendingAssistant" | "toolProgress">): ChatMessage[] {
+  const raw: unknown[] = [...active.session.messages];
+  if (active.pendingAssistant && !raw.includes(active.pendingAssistant)) {
+    const tail = record(raw.at(-1));
+    const pending = record(active.pendingAssistant);
+    if (tail?.role === "assistant" && pending?.timestamp !== undefined && pending.timestamp === tail.timestamp) raw[raw.length - 1] = active.pendingAssistant;
+    else raw.push(active.pendingAssistant);
+  }
+  const messages = convertMessages(raw);
+  if (active.toolProgress?.size) {
+    for (const message of messages) for (const tool of message.tools || []) {
+      const progress = active.toolProgress.get(tool.id);
+      if (progress) Object.assign(tool, progress);
+    }
+  }
+  return messages;
 }
 
 export function contextUsageFromSession(session: AgentSession): ContextUsage | undefined {

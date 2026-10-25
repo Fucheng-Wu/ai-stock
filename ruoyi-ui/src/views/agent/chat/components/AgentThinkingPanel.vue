@@ -58,7 +58,7 @@ export default {
 .agent-thinking {
   width: 100%;
   margin: 0 0 9px;
-  border-left: 2px solid #e5e0da;
+  border-left: 2px solid #e5e7eb;
 
   > button {
     display: flex;
@@ -68,9 +68,9 @@ export default {
     padding: 5px 10px;
     border: 0;
     background: transparent;
-    color: #98938d;
+    color: #6b7280;
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
 
     i:last-child { font-size: 9px; }
@@ -84,9 +84,9 @@ export default {
   max-height: 260px;
   overflow: auto;
   padding: 4px 12px 9px;
-  color: #8a857f;
-  font-size: 11px;
-  line-height: 1.65;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.85;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }

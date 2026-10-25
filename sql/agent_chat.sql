@@ -2,6 +2,7 @@
 
 create table if not exists agent_chat_session (
   session_id varchar(128) not null,
+  user_id varchar(64) default null comment '若依用户ID；NULL为未归属的旧会话',
   workspace_key char(64) not null comment '工作目录SHA-256',
   workspace varchar(1024) not null,
   title varchar(255) not null default '新对话',
@@ -16,6 +17,9 @@ create table if not exists agent_chat_session (
   created_at datetime(3) not null,
   updated_at datetime(3) not null,
   primary key (session_id),
-  key idx_agent_chat_workspace_updated (workspace_key, updated_at)
+  key idx_agent_chat_workspace_updated (workspace_key, updated_at),
+  key idx_agent_chat_user_updated (workspace_key, user_id, updated_at)
 ) engine=InnoDB default charset=utf8mb4 comment='Agent会话持久化';
+
+-- 已存在的旧表请另外执行 sql/agent_chat_user_isolation.sql。
 

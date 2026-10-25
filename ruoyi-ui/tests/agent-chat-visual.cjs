@@ -1,0 +1,110 @@
+// Render the production build with isolated preview identities and data.
+// AGENT_BROWSER_MODULE may point to a preinstalled Playwright package.
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const http = require('node:http')
+const os = require('node:os')
+const path = require('node:path')
+const { chromium } = require(process.env.AGENT_BROWSER_MODULE || 'playwright')
+
+async function main() {
+  const root = path.resolve(__dirname, '../dist')
+  const output = process.env.AGENT_UI_SCREENSHOTS || path.join(os.tmpdir(), 'ai-stock-agent-ui')
+  fs.mkdirSync(output, { recursive: true })
+  const types = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf' }
+  const server = http.createServer((req, res) => {
+    let filename = path.resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname))
+    if (filename !== root && !filename.startsWith(root + path.sep)) { res.writeHead(403).end(); return }
+    if (!fs.existsSync(filename) || fs.statSync(filename).isDirectory()) filename = path.join(root, 'index.html')
+    res.writeHead(200, { 'content-type': types[path.extname(filename)] || 'application/octet-stream' })
+    fs.createReadStream(filename).pipe(res)
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  let browser
+  try {
+    const executablePath = process.env.AGENT_BROWSER_EXECUTABLE
+    browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block', reducedMotion: 'reduce' })
+    await context.addCookies([{ name: 'Admin-Token', value: 'visual-preview-only', url: origin }])
+    await context.route('**/prod-api/**', async route => {
+      const url = new URL(route.request().url())
+      let result = { code: 200, data: [] }
+      if (url.pathname.endsWith('/getInfo')) result = { code: 200, user: { userId: 42, userName: 'orange', nickName: 'orange', avatar: '' }, roles: ['admin'], permissions: ['*:*:*'], isDefaultModifyPwd: false, isPasswordExpired: false }
+      if (url.pathname.endsWith('/getRouters')) result = { code: 200, data: [{ name: 'AgentSpace', path: '/agent', component: 'Layout', meta: { title: '工作台' }, children: [{ path: 'chat', name: 'AgentChat', component: 'agent/chat/index', meta: { title: 'Agent助手', icon: 'message' } }] }] }
+      await route.fulfill({ json: result })
+    })
+    await context.addInitScript(() => {
+      const today = new Date().toISOString()
+      const sessions = [
+        { id: 'research-1', title: '520 战法 · 趋势与信号解读', updatedAt: today, messageCount: 2 },
+        { id: 'research-2', title: '如何理解均线与回踩信号', updatedAt: today, messageCount: 6 },
+        { id: 'research-3', title: '本周市场资讯研究', updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(), messageCount: 4 },
+        { id: 'research-4', title: 'ETF 与股票的基础知识', updatedAt: new Date(Date.now() - 10 * 86400000).toISOString(), messageCount: 8 }
+      ]
+      class PreviewSocket {
+        static OPEN = 1
+        static CONNECTING = 0
+        constructor() { this.readyState = 0; setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen() }, 0) }
+        deliver(message) { setTimeout(() => { if (this.readyState === 1 && this.onmessage) this.onmessage({ data: JSON.stringify(message) }) }, 0) }
+        send(raw) {
+          const command = JSON.parse(raw)
+          const requestId = command.requestId
+          if (command.type === 'ping') this.deliver({ type: 'pong' })
+          if (command.type === 'init') this.deliver({ type: 'init', protocolVersion: 1, userId: '42', sessions, settings: {}, models: [], providers: [], requestId })
+          if (command.type === 'list_sessions') this.deliver({ type: 'sessions', sessions: sessions.filter(session => session.title.includes(command.query || '')), requestId })
+          if (command.type === 'load_session') this.deliver({ type: 'session_state', requestId, session: {
+            summary: sessions.find(session => session.id === command.sessionId), isStreaming: false, epoch: 'preview', sequence: 0,
+            model: { provider: 'deepseek', id: 'deepseek-v4-pro' }, thinkingLevel: 'medium', contextUsage: { percent: 12 },
+            messages: [
+              { id: 'question', role: 'user', text: '帮我梳理520战法的判断顺序，重点看趋势和回踩信号。', timestamp: today },
+              { id: 'answer', role: 'assistant', timestamp: today, thinking: '先说明方法的判断顺序，再把趋势、买点和执行条件分开呈现。',
+                tools: [{ id: 'stock-task', name: 'Agent', input: { profile: 'stock-analyst', task: '梳理520战法的三步判断流程' }, output: '已整理趋势、买点与执行条件，以下为界面预览内容。', status: 'done', durationMs: 2400 }],
+                text: '## 先看趋势，再找信号\n\n可以把判断分成三步，避免只盯着一次交叉就下结论。\n\n| 判断步骤 | 重点观察 | 需要补充的信息 |\n| --- | --- | --- |\n| 趋势 | MA20方向与价格位置 | 连续交易日表现 |\n| 买点 | MA5与MA20的关系 | 回踩、粘合与量能 |\n| 执行 | 信号是否得到确认 | 失效条件与风险边界 |\n\n> 单个信号需要结合趋势和后续确认一起理解。\n\n这是界面预览数据，用于检查排版，未连接实时行情服务。' }
+            ]
+          } })
+        }
+        close() { this.readyState = 3; if (this.onclose) this.onclose({ code: 1000 }) }
+      }
+      window.WebSocket = PreviewSocket
+    })
+    const page = await context.newPage()
+    const errors = []
+    page.on('pageerror', error => errors.push(error.message))
+    await page.goto(`${origin}/agent/chat`, { waitUntil: 'networkidle' })
+    await page.getByText('先看趋势，再找信号', { exact: true }).waitFor()
+    await page.locator('.agent-session-item').first().hover()
+    const edit = await page.getByRole('button', { name: '重命名对话', exact: true }).first().boundingBox()
+    const remove = await page.getByRole('button', { name: '删除对话', exact: true }).first().boundingBox()
+    assert.ok(edit && remove && edit.x + edit.width <= remove.x, 'rename and delete actions overlap')
+    await page.locator('.agent-conversation').evaluate(element => { element.scrollTop = 0 })
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-conversation-desktop.png') })
+    await page.locator('.agent-tool-card__toggle').click()
+    await page.getByText('调用参数', { exact: true }).waitFor()
+    await page.locator('.agent-tool-card__toggle').click()
+    await page.getByRole('button', { name: '新建对话', exact: false }).click()
+    await page.getByRole('heading', { name: /从一个问题/ }).waitFor()
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-welcome-desktop.png') })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForFunction(() => document.querySelector('.agent-sidebar').getBoundingClientRect().right <= document.querySelector('.agent-chat-page').getBoundingClientRect().left + 1)
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-mobile.png') })
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile page has horizontal overflow')
+    await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
+    await page.locator('.agent-sidebar.is-mobile-open').waitFor()
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-sidebar-mobile.png') })
+    await page.locator('.agent-session-item__main').first().click()
+    await page.getByText('先看趋势，再找信号', { exact: true }).waitFor()
+    await page.waitForFunction(() => document.querySelector('.agent-sidebar').getBoundingClientRect().right <= document.querySelector('.agent-chat-page').getBoundingClientRect().left + 1)
+    await page.locator('.agent-conversation').evaluate(element => { element.scrollTop = 0 })
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-conversation-mobile.png') })
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile conversation has horizontal overflow')
+    assert.deepEqual(errors, [], 'browser runtime errors')
+    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer'], browserErrors: errors }))
+  } finally {
+    if (browser) await browser.close()
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1 })

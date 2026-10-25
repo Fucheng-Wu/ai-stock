@@ -13,11 +13,6 @@
 
 历史菜单 Hermes控制台（2011）、Pi控制台（2012）已隐藏（visible='1'），终端能力统一由 JupyterLab 提供。
 
-## 修改与验证约束
-
-- 只负责修改代码，不做任何验证：不运行编译、构建、测试、lint、启动服务等命令。
-- 修改完成后不要尝试验证结果，用户会在本地拉取代码后自行打包构建验证。
-- 除非用户明确要求，否则不要运行 `mvn`、`npm`、`yarn`、测试脚本等验证性命令。
 
 ## 技能使用约束
 
@@ -99,16 +94,17 @@ deepseek:
 
 - 页面：`ruoyi-ui/src/views/agent/chat/index.vue`，提供多会话、流式回复、停止生成、思考过程和工具调用展示。同一轮直到 `agent_end` 才结束流式气泡，不能在中间 `message_end` 清空流式消息 ID；工具结果按调用 ID 回写。
 - 富文本：`ruoyi-ui/src/views/agent/chat/components/AgentMarkdown.vue` 使用 `markdown-it`，代码高亮/复制由 `AgentCodeBlock.vue` 提供，顶层 `echarts` JSON 围栏由 `AgentEchart.vue` 渲染为可预览、查看配置和下载的图表；输出约定在 `agent-gateway/backend/src/lib/response-format.ts`。
+- 页面样式集中在同目录的 `chat.scss`，工具卡片为 `AgentToolCard.vue`；Markdown流式渲染每60毫秒合并，长工具输出默认预览末尾12,000字。已选择性同步上游 `18ab3ee`，记录见 `agent-gateway/UPSTREAM.md`；事件按 `epoch/sequence` 去重和重新同步，保持现有用户隔离和角色限制。
 - 后端：`agent-gateway/backend`，基于 Hono、WebSocket 和 `@earendil-works/pi-coding-agent`，源码与项目一同维护和启动。
 - 共享协议：`agent-gateway/shared/types.ts`，前后端使用 WebSocket v1 消息协议。
-- 会话持久化：`agent-gateway/backend/src/lib/database.ts` 将完整消息、JSONL 备份、模型、思考强度和上下文用量保存到 MySQL；本地历史会自动导入，JSONL 丢失时可从数据库重建。
+- 会话持久化：`agent-gateway/backend/src/lib/database.ts` 将完整消息、JSONL 备份、模型、思考强度和上下文用量按若依用户保存到 MySQL；无所属用户的旧记录不自动导入或展示，JSONL 丢失时可从数据库重建。列表每页30条、历史每页40条，查看历史不占用运行会话名额。
 - 数据表：`sql/agent_chat.sql` 创建 `agent_chat_session`；连接参数位于 `agent-gateway/.env`（模板为 `.env.example`）。
 - 启动：首次使用 `.\bin\start-agent-gateway.ps1 -Install`，后续使用 `.\bin\start-agent-gateway.ps1`；默认 Agent 工作目录为本仓库根目录。
 - 协议：直接使用 `pi-agent-gateway` 的 WebSocket v1 协议；前端默认连接同源 `/agent-ws`。
 - 开发代理：`ruoyi-ui/vue.config.js` 将 `/agent-ws` 转发到 `http://127.0.0.1:3000/ws`。
 - 生产部署：nginx 反代与安全注意事项见 `docs/agent-chat-deployment.md`。
 - 菜单 SQL：`sql/agent_chat_menu.sql`（菜单 2018，order=8），默认只授权角色 1、4。
-- 权限标识：`agent:chat:use`。
+- 权限标识：`agent:chat:use` 用于聊天，`agent:chat:manage` 单独控制模型、认证、技能、插件和 MCP 配置管理（按钮菜单2019）；均由网关在执行命令前校验。草稿按用户及会话保存在 sessionStorage；流式事件合并刷新，页面缓存最多8个会话、每个会话最多120条可见消息。
 - 主 Agent 固定为 `general`（普通 Agent），唯一工具为 `Agent`，且只能调用 `stock-analyst` 股票子代理；股票问题必须委派，其他问题可正常文字回答。旧会话和 MySQL 恢复也统一使用受限角色，不提供 Build/Plan 或全局自定义角色。
 - 工具限制：`agent-gateway/backend/src/lib/agent-policy.ts` 定义精确白名单，`permissions.ts` 在执行时再次检查。两层代理均禁止内部文件/目录/代码查询、写入、编辑、终端、执行代码和 MCP；不自动加载全局扩展、技能、提示模板或项目上下文。角色文件不能扩大权限，子代理不能递归委派。
 - 股票子代理：`agent-gateway/backend/subagents/stock-analyst/agent.md`，专属回答股票、ETF、证券知识和财经资讯。同目录的 `tools.ts` 为其注册 `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，通过 `STOCK_API_BASE_URL` 复用 Java 服务；按每轮 prompt 透传当前用户登录身份，不将令牌写入模型上下文或会话数据库，权限沿用 `stock:analyzer:analyze`。名称提问先搜索，只有唯一精确匹配才自动分析，否则让用户确认候选。
