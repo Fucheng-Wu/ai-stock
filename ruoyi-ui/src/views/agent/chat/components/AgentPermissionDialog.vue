@@ -3,7 +3,7 @@
     title="允许代理执行此操作？"
     :visible="true"
     width="560px"
-    custom-class="agent-permission-dialog"
+    :custom-class="'agent-permission-dialog' + (agentAppearance && agentAppearance.theme === 'dark' ? ' is-dark' : '')"
     append-to-body
     :close-on-click-modal="false"
     :show-close="!busy"
@@ -40,6 +40,7 @@
 <script>
 export default {
   name: 'AgentPermissionDialog',
+  inject: { agentAppearance: { default: null } },
   props: {
     request: { type: Object, required: true },
     busy: { type: Boolean, default: false },
@@ -80,19 +81,19 @@ export default {
   font-size: 12px;
   line-height: 1.7;
   overflow-wrap: anywhere;
-  dt { color: #909399; }
+  dt { color: var(--agent-muted, #909399); }
   dd { margin: 4px 0 12px; white-space: pre-wrap; }
   dd, li, pre { font-family: Consolas, monospace; }
   summary { cursor: pointer; }
-  pre { padding: 12px; background: #f7f8fa; white-space: pre-wrap; }
+  pre { padding: 12px; background: var(--agent-surface, #f7f8fa); white-space: pre-wrap; }
 }
 .agent-permission__scope {
   margin-bottom: 16px;
   padding: 12px;
-  border: 1px solid #f1ddcb;
+  border: 1px solid var(--agent-warning-line, #f1ddcb);
   border-radius: 8px;
-  background: #fff9f3;
+  background: var(--agent-warning-soft, #fff9f3);
   li { white-space: pre-wrap; }
-  p { color: #9b632c; }
+  p { color: var(--agent-syntax-number, #9b632c); }
 }
 </style>

@@ -42,10 +42,20 @@ async function main() {
         { id: 'research-3', title: '本周市场资讯研究', updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(), messageCount: 4 },
         { id: 'research-4', title: 'ETF 与股票的基础知识', updatedAt: new Date(Date.now() - 10 * 86400000).toISOString(), messageCount: 8 }
       ]
+      const childRun = {
+        id: 'child-stock-1', profile: 'stock-analyst', name: '股票子代理', task: '梳理520战法的三步判断流程', status: 'done',
+        messages: [
+          { id: 'child-user', role: 'user', text: '梳理520战法的三步判断流程' },
+          { id: 'child-answer', role: 'assistant', thinking: '先检查趋势证据，再分析信号。',
+            tools: [{ id: 'quote', name: 'stock_quote', input: { stockCode: '510300' }, output: '行情预览数据', status: 'done' }],
+            text: '## 股票子代理的判断过程\n\n' + Array.from({ length: 22 }, (_, i) => `第 ${i + 1} 步：结合 MA20 方向与价格位置判断趋势，核对回踩信号。`).join('\n\n') + '\n\n```echarts\n{"animation":false,"xAxis":{"type":"category","data":["一","二"]},"yAxis":{"type":"value"},"series":[{"type":"line","data":[1,2]}]}\n```' }
+        ]
+      }
+      window.previewRun = childRun
       class PreviewSocket {
         static OPEN = 1
         static CONNECTING = 0
-        constructor() { this.readyState = 0; setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen() }, 0) }
+        constructor() { window.previewSocket = this; this.readyState = 0; setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen() }, 0) }
         deliver(message) { setTimeout(() => { if (this.readyState === 1 && this.onmessage) this.onmessage({ data: JSON.stringify(message) }) }, 0) }
         send(raw) {
           const command = JSON.parse(raw)
@@ -55,11 +65,11 @@ async function main() {
           if (command.type === 'list_sessions') this.deliver({ type: 'sessions', sessions: sessions.filter(session => session.title.includes(command.query || '')), requestId })
           if (command.type === 'load_session') this.deliver({ type: 'session_state', requestId, session: {
             summary: sessions.find(session => session.id === command.sessionId), isStreaming: false, epoch: 'preview', sequence: 0,
-            model: { provider: 'deepseek', id: 'deepseek-v4-pro' }, thinkingLevel: 'medium', contextUsage: { percent: 12 },
+            model: { provider: 'deepseek', id: 'deepseek-flash' }, thinkingLevel: 'medium', contextUsage: { percent: 12 },
             messages: [
               { id: 'question', role: 'user', text: '帮我梳理520战法的判断顺序，重点看趋势和回踩信号。', timestamp: today },
               { id: 'answer', role: 'assistant', timestamp: today, thinking: '先说明方法的判断顺序，再把趋势、买点和执行条件分开呈现。',
-                tools: [{ id: 'stock-task', name: 'Agent', input: { profile: 'stock-analyst', task: '梳理520战法的三步判断流程' }, output: '已整理趋势、买点与执行条件，以下为界面预览内容。', status: 'done', durationMs: 2400 }],
+                tools: [{ id: 'stock-task', name: 'Agent', input: { profile: 'stock-analyst', task: '梳理520战法的三步判断流程' }, output: '已整理趋势、买点与执行条件，以下为界面预览内容。', status: 'done', durationMs: 2400, subagent: childRun }],
                 text: '## 先看趋势，再找信号\n\n可以把判断分成三步，避免只盯着一次交叉就下结论。\n\n| 判断步骤 | 重点观察 | 需要补充的信息 |\n| --- | --- | --- |\n| 趋势 | MA20方向与价格位置 | 连续交易日表现 |\n| 买点 | MA5与MA20的关系 | 回踩、粘合与量能 |\n| 执行 | 信号是否得到确认 | 失效条件与风险边界 |\n\n> 单个信号需要结合趋势和后续确认一起理解。\n\n这是界面预览数据，用于检查排版，未连接实时行情服务。' }
             ]
           } })
@@ -82,6 +92,41 @@ async function main() {
     await page.locator('.agent-tool-card__toggle').click()
     await page.getByText('调用参数', { exact: true }).waitFor()
     await page.locator('.agent-tool-card__toggle').click()
+    await page.getByRole('button', { name: '查看子代理对话', exact: false }).click()
+    await page.getByRole('complementary', { name: '子代理聊天' }).waitFor()
+    await page.getByText('股票子代理的判断过程', { exact: true }).waitFor()
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-subagent-light.png') })
+    await page.getByRole('button', { name: '切换到暗色主题', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('.agent-chat-page').dataset.agentTheme === 'dark')
+    assert.equal(await page.locator('.agent-topbar').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(41, 42, 45)')
+    assert.equal(await page.locator('.agent-subagent-panel').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(41, 42, 45)')
+    await page.waitForFunction(() => {
+      const component = document.querySelector('.agent-chart-card').__vue__
+      return component && component.ready && component.chartInstance.getOption().backgroundColor === '#292a2d'
+    })
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-subagent-dark.png') })
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.getByText('先看趋势，再找信号', { exact: true }).waitFor()
+    assert.equal(await page.locator('.agent-chat-page').getAttribute('data-agent-theme'), 'dark', 'theme preference survives refresh')
+    await page.getByRole('button', { name: '查看子代理对话', exact: false }).click()
+    const panelScroll = page.locator('.agent-subagent-panel__scroll')
+    await panelScroll.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) })
+    await page.evaluate(() => {
+      const run = { ...window.previewRun, messages: window.previewRun.messages.map(message => message.role === 'assistant' ? { ...message, text: message.text + '\n\n子代理实时更新' } : message) }
+      window.previewSocket.deliver({ type: 'tool_update', sessionId: 'research-1', toolCallId: 'stock-task', subagent: run })
+    })
+    await page.getByText('子代理实时更新', { exact: true }).waitFor({ state: 'attached' })
+    await page.waitForTimeout(200)
+    assert.equal(await panelScroll.evaluate(el => el.scrollTop), 0, 'child updates preserve paused scroll')
+    await page.getByRole('button', { name: '回到最新', exact: true }).click()
+    await page.waitForFunction(() => { const el = document.querySelector('.agent-subagent-panel__scroll'); return el.scrollHeight - el.scrollTop - el.clientHeight < 5 })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForFunction(() => document.querySelector('.agent-chart-card').__vue__.ready)
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-subagent-mobile-dark.png') })
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile subagent view has no horizontal overflow')
+    await page.getByRole('button', { name: '关闭子代理聊天', exact: true }).click()
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.getByRole('button', { name: '切换到亮色主题', exact: true }).click()
     await page.getByRole('button', { name: '新建对话', exact: false }).click()
     await page.getByRole('heading', { name: /从一个问题/ }).waitFor()
     await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-welcome-desktop.png') })
@@ -99,7 +144,7 @@ async function main() {
     await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-conversation-mobile.png') })
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile conversation has horizontal overflow')
     assert.deepEqual(errors, [], 'browser runtime errors')
-    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer'], browserErrors: errors }))
+    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer', 'subagent split view', 'live child updates', 'scroll following', 'theme persistence', 'dark theme', 'mobile subagent'], browserErrors: errors }))
   } finally {
     if (browser) await browser.close()
     server.closeAllConnections()

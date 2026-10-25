@@ -91,6 +91,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ code: 200, data: { name: "测试股票", price: 100, time: "2026-10-24 15:00:00" } }));
   });
+  let childFails = false;
   const modelServer = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -98,6 +99,11 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     requests.push(body);
     const toolNames = body.tools?.map((tool: any) => tool.function.name) ?? [];
     const primary = toolNames.includes("Agent");
+    if (!primary && childFails) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "child model unavailable", type: "invalid_request_error" } }));
+      return;
+    }
     const afterTool = body.messages.at(-1)?.role === "tool";
     const tool = primary ? "Agent" : "stock_quote";
     const args = primary ? { profile: "stock-analyst", task: "查询 sh600519 最新行情并注明来源" } : { stockCode: "sh600519" };
@@ -154,8 +160,17 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     assert.equal(active.role.profile.id, "general");
     for (const id of ["build", "plan", "reviewer"]) await assert.rejects(switchPrimaryAgent(resources, active, id));
     let partialSnapshots = 0;
+    let childUpdates = 0;
+    let missingChildSnapshot = false;
+    let rawChildOutput = false;
     let missingPartialSnapshot = false;
     attachEventRelay(active, event => {
+      if (event.type === "tool_update" && event.subagent) {
+        childUpdates++;
+        if (event.output !== undefined) rawChildOutput = true;
+        const tool = convertActiveMessages(active).flatMap(message => message.tools ?? []).find(tool => tool.id === event.toolCallId);
+        if (JSON.stringify(tool?.subagent) !== JSON.stringify(event.subagent)) missingChildSnapshot = true;
+      }
       if (event.type === "text_delta") {
         partialSnapshots++;
         if (!convertActiveMessages(active).at(-1)?.text.endsWith(event.delta)) missingPartialSnapshot = true;
@@ -163,6 +178,9 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     });
     await runWithStockToolToken(token, () => active.session.prompt("查询600519行情", { expandPromptTemplates: false }));
     assert.ok(partialSnapshots > 0);
+    assert.ok(childUpdates > 0);
+    assert.equal(missingChildSnapshot, false, "reconnect snapshot lost child progress");
+    assert.equal(rawChildOutput, false, "child progress must not be serialized as raw JSON output");
     assert.equal(missingPartialSnapshot, false, "live snapshot omitted the latest streamed text");
     assert.equal(stockRequests, 1);
     assert.equal(requests.length, 4);
@@ -179,6 +197,10 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
       }
     }
     assert.equal((await resources.features.getSubagentSettings()).active, 0);
+    const child = convertActiveMessages(active).flatMap(message => message.tools ?? []).find(tool => tool.name === "Agent")?.subagent;
+    assert.equal(child?.status, "done");
+    assert.ok(child?.messages.some(message => message.text.includes("最新价100")));
+    assert.ok(child?.messages.some(message => message.tools?.some(tool => tool.name === "stock_quote" && tool.status === "done")));
     // A missing local file must not prevent a complete backup and JSONL recovery.
     await unlink(active.manager.getSessionFile()!);
     const conversationRecord = buildPersistedRecord(active, root);
@@ -188,6 +210,15 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     // JSON persistence intentionally omits optional properties whose value is undefined.
     assert.deepEqual(restoredConversation.session.messages, JSON.parse(JSON.stringify(active.session.messages)));
     assert.equal(restoredConversation.userId, "1");
+    assert.deepEqual(convertActiveMessages(restoredConversation).flatMap(message => message.tools ?? [])[0]?.subagent, JSON.parse(JSON.stringify(child)));
+    // The SDK creates failed tool results itself; our tool_result hook must attach child details.
+    childFails = true;
+    await runWithStockToolToken(token, () => active.session.prompt("再查询一次行情", { expandPromptTemplates: false }));
+    const failedTool = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1);
+    assert.equal(failedTool?.status, "error");
+    assert.equal(failedTool?.subagent?.status, "error");
+    assert.match(failedTool?.subagent?.error ?? "", /child model unavailable/);
+    assert.equal((await resources.features.getSubagentSettings()).active, 0);
     const recovered = await resumeSessionFromDatabase(resources, {
       userId: "1",
       summary: { id: "restored-test", title: "恢复", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },

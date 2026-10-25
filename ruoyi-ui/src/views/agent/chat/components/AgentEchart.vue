@@ -28,6 +28,7 @@ import AgentCodeBlock from './AgentCodeBlock.vue'
 
 export default {
   name: 'AgentEchart',
+  inject: { agentAppearance: { default: null } },
   components: { AgentCodeBlock },
   props: {
     source: { type: String, default: '' },
@@ -37,6 +38,11 @@ export default {
     return { view: 'chart', error: '', ready: false }
   },
   watch: {
+    'agentAppearance.theme'() {
+      if (this.chartInstance) this.chartInstance.dispose()
+      this.chartInstance = null
+      this.scheduleRender()
+    },
     source: 'scheduleRender',
     pending: 'scheduleRender',
     view(value) {
@@ -80,10 +86,10 @@ export default {
       if (this.disposed || this.pending || this.view !== 'chart') return
       try {
         const source = this.source
-        const option = parseAgentChart(source)
+        const option = parseAgentChart(source, this.agentAppearance && this.agentAppearance.theme)
         await this.$nextTick()
         if (this.disposed || this.pending || this.view !== 'chart' || source !== this.source || !this.$refs.canvas) return
-        if (!this.chartInstance) this.chartInstance = echarts.init(this.$refs.canvas)
+        if (!this.chartInstance) this.chartInstance = echarts.init(this.$refs.canvas, this.agentAppearance && this.agentAppearance.theme === 'dark' ? 'dark' : null)
         this.chartInstance.setOption(option, true)
         this.chartInstance.resize()
         this.ready = true
@@ -103,7 +109,7 @@ export default {
       if (!this.chartInstance || !this.ready) return
       try {
         const link = document.createElement('a')
-        link.href = this.chartInstance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#fff', excludeComponents: ['toolbox'] })
+        link.href = this.chartInstance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: this.agentAppearance && this.agentAppearance.theme === 'dark' ? '#292a2d' : '#fff', excludeComponents: ['toolbox'] })
         link.download = `agent-chart-${Date.now()}.png`
         document.body.appendChild(link)
         link.click()
@@ -121,9 +127,9 @@ export default {
   min-width: 0;
   margin: 18px 0;
   overflow: hidden;
-  border: 1px solid #e2e5ea;
+  border: 1px solid var(--agent-line, #e2e5ea);
   border-radius: 14px;
-  background: #fff;
+  background: var(--agent-background, #fff);
 }
 .agent-chart-card__header {
   display: flex;
@@ -131,8 +137,8 @@ export default {
   gap: 14px;
   flex-wrap: wrap;
   padding: 10px 14px;
-  border-bottom: 1px solid #edf0f3;
-  color: #767e89;
+  border-bottom: 1px solid var(--agent-line, #edf0f3);
+  color: var(--agent-muted, #767e89);
   font-size: 11px;
 }
 .agent-chart-card__label { display: flex; align-items: center; gap: 6px; }
@@ -141,16 +147,16 @@ export default {
   gap: 3px;
   padding: 3px;
   border-radius: 7px;
-  background: #f3f4f6;
+  background: var(--agent-surface, #f3f4f6);
   button {
     padding: 4px 11px;
     border: 0;
     border-radius: 5px;
     background: transparent;
-    color: #818791;
+    color: var(--agent-muted, #818791);
     font-size: 11px;
     cursor: pointer;
-    &.is-active { background: #fff; color: #343b45; box-shadow: 0 1px 3px #0000000d; }
+    &.is-active { background: var(--agent-background, #fff); color: var(--agent-text, #343b45); box-shadow: 0 1px 3px #0000000d; }
   }
 }
 .agent-chart-card__download {
@@ -158,7 +164,7 @@ export default {
   padding: 4px 0;
   border: 0;
   background: transparent;
-  color: #737d89;
+  color: var(--agent-muted, #737d89);
   font-size: 11px;
   cursor: pointer;
   &:disabled { opacity: 0.4; cursor: default; }
@@ -170,10 +176,10 @@ export default {
   align-items: center;
   justify-content: center;
   gap: 9px;
-  color: #939aa3;
+  color: var(--agent-muted, #939aa3);
   font-size: 13px;
 }
-.agent-chart-card__error { padding: 16px; color: #a36c37; font-size: 12px; }
+.agent-chart-card__error { padding: 16px; color: var(--agent-syntax-number, #a36c37); font-size: 12px; }
 .agent-chart-card ::v-deep .agent-code-block { margin: 0; border: 0; border-radius: 0; }
 @media (max-width: 600px) {
   .agent-chart-card__canvas { height: 300px; }

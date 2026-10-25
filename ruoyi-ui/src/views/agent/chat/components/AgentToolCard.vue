@@ -6,6 +6,7 @@
       <span class="agent-tool-card__status">{{ tool.status === 'running' ? '执行中' : tool.status === 'error' ? '执行失败' : '已完成' }}<small v-if="duration">{{ duration }}</small></span>
       <i class="agent-tool-card__chevron" :class="open ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
     </button>
+    <button v-if="tool.name === 'Agent' || tool.subagent" class="agent-tool-card__subagent" type="button" @click="$emit('subagent', tool.id)"><i class="el-icon-chat-dot-round" /> 查看子代理{{ tool.status === 'running' ? '实时过程' : '对话' }} <i class="el-icon-right" /></button>
     <div v-if="open" class="agent-tool-card__details">
       <div v-if="input"><span>调用参数</span><pre tabindex="0">{{ input }}</pre></div>
       <div v-if="tool.output">
@@ -44,17 +45,18 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-.agent-tool-card { margin: 12px 0; overflow: hidden; border: 1px solid #e5e7eb; border-radius: 14px; background: #f8fafc; }
-.agent-tool-card__toggle { display: flex; width: 100%; align-items: center; gap: 12px; padding: 14px; border: 0; background: transparent; font-family: inherit; text-align: left; cursor: pointer; &:hover { background: #f3f4f6; } &:focus-visible { outline: 2px solid #4d6bfe; outline-offset: -3px; } }
-.agent-tool-card__icon { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid #d5e9dd; border-radius: 10px; background: #edf6ef; color: #397657; font-size: 15px; }
-.agent-tool-card__heading { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; strong { overflow: hidden; color: #374151; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; } small { overflow: hidden; color: #6b7280; font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; } }
-.agent-tool-card__status { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: 5px; color: #63806b; font-size: 11px; white-space: nowrap; small { color: #9ca3af; font-size: 11px; font-variant-numeric: tabular-nums; } }
-.agent-tool-card__chevron { color: #9ca3af; font-size: 11px; }
-.is-running .agent-tool-card__icon { border-color: #dbe4ff; background: #edf2ff; color: #4d6bfe; }
-.is-running .agent-tool-card__status { color: #4d6bfe; }
-.is-error .agent-tool-card__icon { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
-.is-error .agent-tool-card__status { color: #b91c1c; }
-.agent-tool-card__details { display: grid; gap: 14px; padding: 15px 16px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 12px; span { color: #6b7280; font-size: 11px; } pre { max-height: 280px; margin: 7px 0 0; padding: 12px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 9px; background: #f3f4f6; color: #374151; font-family: Consolas, monospace; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; } }
-.agent-tool-card__more { margin-top: 9px; padding: 3px 0; border: 0; background: transparent; color: #4d6bfe; font-size: 12px; cursor: pointer; }
+.agent-tool-card { margin: 12px 0; overflow: hidden; border: 1px solid var(--agent-line, #e5e7eb); border-radius: 14px; background: var(--agent-surface-soft, #f8fafc); }
+.agent-tool-card__toggle { display: flex; width: 100%; align-items: center; gap: 12px; padding: 14px; border: 0; background: transparent; font-family: inherit; text-align: left; cursor: pointer; &:hover { background: var(--agent-surface, #f3f4f6); } &:focus-visible { outline: 2px solid var(--agent-link, #4d6bfe); outline-offset: -3px; } }
+.agent-tool-card__icon { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid var(--agent-success-line, #d5e9dd); border-radius: 10px; background: var(--agent-success-soft, #edf6ef); color: var(--agent-success, #397657); font-size: 15px; }
+.agent-tool-card__heading { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; strong { overflow: hidden; color: var(--agent-text, #374151); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; } small { overflow: hidden; color: var(--agent-muted, #6b7280); font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; } }
+.agent-tool-card__status { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: 5px; color: var(--agent-success, #63806b); font-size: 11px; white-space: nowrap; small { color: var(--agent-subtle, #9ca3af); font-size: 11px; font-variant-numeric: tabular-nums; } }
+.agent-tool-card__chevron { color: var(--agent-subtle, #9ca3af); font-size: 11px; }
+.is-running .agent-tool-card__icon { border-color: var(--agent-accent-line, #dbe4ff); background: var(--agent-accent-soft, #edf2ff); color: var(--agent-link, #4d6bfe); }
+.is-running .agent-tool-card__status { color: var(--agent-link, #4d6bfe); }
+.is-error .agent-tool-card__icon { border-color: var(--agent-error-line, #fecaca); background: var(--agent-error-soft, #fef2f2); color: var(--agent-error, #b91c1c); }
+.is-error .agent-tool-card__status { color: var(--agent-error, #b91c1c); }
+.agent-tool-card__details { display: grid; gap: 14px; padding: 15px 16px; border-top: 1px solid var(--agent-line, #e5e7eb); color: var(--agent-muted, #6b7280); font-size: 12px; span { color: var(--agent-muted, #6b7280); font-size: 11px; } pre { max-height: 280px; margin: 7px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--agent-line, #e5e7eb); border-radius: 9px; background: var(--agent-surface, #f3f4f6); color: var(--agent-text, #374151); font-family: Consolas, monospace; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; } }
+.agent-tool-card__more { margin-top: 9px; padding: 3px 0; border: 0; background: transparent; color: var(--agent-link, #4d6bfe); font-size: 12px; cursor: pointer; }
+.agent-tool-card__subagent { display: flex; width: 100%; align-items: center; gap: 7px; padding: 10px 15px; border: 0; border-top: 1px solid var(--agent-line, #e5e7eb); background: transparent; color: var(--agent-link, #4d6bfe); font-size: 12px; cursor: pointer; > i:last-child { margin-left: auto; } }
 @media (max-width: 600px) { .agent-tool-card__toggle { gap: 9px; padding: 12px 10px; } .agent-tool-card__heading strong { font-size: 12px; } }
 </style>

@@ -1,6 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentUiEvent, ChatMessage } from "../../../shared/types.js";
-import { contextUsageFromSession, convertMessages, titleFromMessages } from "./message-converter.js";
+import { contextUsageFromSession, convertMessages, subagentFromResult, titleFromMessages } from "./message-converter.js";
 import type { ActiveSession } from "./types.js";
 
 type SendEvent = (event: AgentUiEvent) => void;
@@ -28,7 +28,12 @@ function finishedMessage(active: ActiveSession, raw: unknown): ChatMessage | und
   if (index < 0 || (role !== "user" && role !== "assistant")) return undefined;
   let start = index;
   while (start > 0 && active.session.messages[start].role !== "user") start--;
-  return convertMessages(active.session.messages.slice(start, index + 1), start).at(-1);
+  const messages = convertMessages(active.session.messages.slice(start, index + 1), start);
+  for (const message of messages) for (const tool of message.tools ?? []) {
+    const progress = active.toolProgress?.get(tool.id);
+    if (progress) Object.assign(tool, progress);
+  }
+  return messages.at(-1);
 }
 
 export function attachEventRelay(
@@ -93,17 +98,22 @@ export function attachEventRelay(
             },
           });
           break;
-        case "tool_execution_update":
-          active.toolProgress?.set(event.toolCallId, { ...active.toolProgress.get(event.toolCallId), output: resultText(event.partialResult) });
+        case "tool_execution_update": {
+          const subagent = subagentFromResult(event.partialResult);
+          active.toolProgress?.set(event.toolCallId, { ...active.toolProgress.get(event.toolCallId), ...(subagent ? { subagent } : { output: resultText(event.partialResult) }) });
           send({
             type: "tool_update",
             sessionId: active.id,
             toolCallId: event.toolCallId,
-            output: resultText(event.partialResult),
+            output: subagent ? undefined : resultText(event.partialResult),
+            ...(subagent ? { subagent } : {}),
           });
           break;
-        case "tool_execution_end":
+        }
+        case "tool_execution_end": {
+          const subagent = subagentFromResult(event.result) ?? active.toolProgress?.get(event.toolCallId)?.subagent;
           active.toolProgress?.set(event.toolCallId, {
+            ...(subagent ? { subagent } : {}),
             status: event.isError ? "error" : "done", output: resultText(event.result),
             durationMs: toolStarts.has(event.toolCallId) ? Date.now() - toolStarts.get(event.toolCallId)! : undefined,
           });
@@ -113,11 +123,13 @@ export function attachEventRelay(
             toolCallId: event.toolCallId,
             output: resultText(event.result),
             isError: event.isError,
+            ...(subagent ? { subagent } : {}),
             durationMs: toolStarts.has(event.toolCallId) ? Date.now() - toolStarts.get(event.toolCallId)! : undefined,
           });
           toolStarts.delete(event.toolCallId);
           if (!toolStarts.size) active.phase = "waiting";
           break;
+        }
         case "message_end": {
           if (event.message.role === "assistant") active.pendingAssistant = undefined;
           const message = finishedMessage(active, event.message);

@@ -1,0 +1,38 @@
+.agent-chat-page, .agent-permission-dialog { color-scheme: light; --agent-muted: #6b7280; --agent-line: #e5e7eb; }
+.agent-chat-page[data-agent-theme='dark'], .agent-permission-dialog.is-dark {
+  color-scheme: dark;
+  --agent-solid-accent: #4d6bfe;
+  --agent-solid-accent-hover: #3b5bdb;
+  --agent-accent-hover: #414d72;
+  --agent-accent-line: #4a557a;
+  --agent-accent-soft: #353e5b;
+  --agent-background: #292a2d;
+  --agent-background-transparent: #292a2d00;
+  --agent-error: #fda4af;
+  --agent-error-line: #71434c;
+  --agent-error-soft: #482d35;
+  --agent-focus: #6579bb;
+  --agent-hover: #35363c;
+  --agent-line: #494b52;
+  --agent-link: #a1b4ff;
+  --agent-muted: #a4a7b1;
+  --agent-sidebar-background: #212225;
+  --agent-subtle: #8e919c;
+  --agent-success: #6ee7b7;
+  --agent-success-line: #365d49;
+  --agent-success-soft: #253b32;
+  --agent-surface: #37383d;
+  --agent-surface-soft: #303135;
+  --agent-syntax-keyword: #cf9ee3;
+  --agent-syntax-number: #e8b57e;
+  --agent-syntax-string: #8bd5a1;
+  --agent-text: #d4d6dd;
+  --agent-text-primary: #f0f0f2;
+  --agent-warning-line: #6f563d;
+  --agent-warning-soft: #42382d;
+}
+.agent-permission-dialog.is-dark {
+  background: var(--agent-background);
+  .el-dialog__title, .el-dialog__body { color: var(--agent-text); }
+  .el-button:not(.el-button--primary) { background: var(--agent-surface); color: var(--agent-text); border-color: var(--agent-line); }
+}

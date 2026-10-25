@@ -18,7 +18,7 @@ async function buildSession(resources: SharedResources, manager: SessionManager,
     profile: await resources.primaryAgents.get(GENERAL_PRIMARY_ID),
     controller: new AbortController(),
   };
-  const modelId = process.env.AGENT_DEFAULT_MODEL?.trim() || "deepseek-v4-pro";
+  const modelId = process.env.AGENT_DEFAULT_MODEL?.trim() || "deepseek-flash";
   const projection = manager.buildSessionProjection();
   // Pi only restores selections automatically when a session has messages.
   // Empty persisted conversations still need to retain their selected settings.

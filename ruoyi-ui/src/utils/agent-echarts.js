@@ -26,7 +26,7 @@ function cleanOption(value, depth = 0) {
 }
 
 /** Parse strict JSON only. Never evaluate functions or JavaScript from model output. */
-export function parseAgentChart(source) {
+export function parseAgentChart(source, theme = 'light') {
   if (source.length > 1_000_000) throw new Error('图表配置过大，请缩小数据范围')
   let parsed
   try { parsed = JSON.parse(source) } catch (error) { throw new Error('图表配置尚不是有效 JSON') }
@@ -48,7 +48,7 @@ export function parseAgentChart(source) {
   base.tooltip = { ...(base.tooltip || {}), renderMode: 'richText' }
   return {
     color: ['#e98750', '#5685cc', '#5ca78c', '#ac82c2', '#d6ad51', '#cb7689'],
-    backgroundColor: '#fff',
+    backgroundColor: theme === 'dark' ? '#292a2d' : '#fff',
     aria: { enabled: true },
     ...option
   }

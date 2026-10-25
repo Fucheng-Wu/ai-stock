@@ -46,8 +46,7 @@ sql/agent_chat.sql
 
 ## 默认模型
 
-新会话默认使用 DeepSeek，型号默认为 `deepseek-v4-pro`（当前 Pi SDK 的 DeepSeek
-默认型号）。可在网关环境配置中通过 `AGENT_DEFAULT_MODEL` 指定 `deepseek` Provider
+新会话默认使用 DeepSeek Flash，型号为 `deepseek-flash`。可在网关环境配置中通过 `AGENT_DEFAULT_MODEL` 指定 `deepseek` Provider
 下已配置的其他模型 ID。默认型号不存在时会提示配置错误。
 
 在 `agent-gateway/.env` 中填写 `DEEPSEEK_API_KEY`，或从 Agent 设置页配置 DeepSeek
@@ -243,6 +242,20 @@ TAVILY_API_KEY=填写Tavily密钥
 
 也可显式输入 `/skill:stock-520 分析600519`。更新前已加载的会话可在空闲时从设置页触发
 资源重载，或新建会话。工具返回来源和查询时间，行情及K线自身的时间应分别解读。
+
+## 子代理过程与主题
+
+Agent 工具卡片的“查看子代理实时过程/对话”按钮可打开股票子代理面板，展示其思考、
+工具执行与回答；桌面并排显示，手机覆盖主对话，关闭后回到主对话。多个调用可在面板
+顶部切换。旧记录没有详细过程时仍可查看最终结果。
+
+子代理过程通过现有 WebSocket 消息的可选 `subagent` 字段传输，最终附在 Agent 工具
+结果内，沿用现有 MySQL/JSONL 备份恢复，无需新增数据表。更新时应同时发布前端构建
+并重启 Agent 网关；此前已运行的网关会话不会自动生成旧子代理的详细过程。
+
+右上角月亮/太阳按钮切换聊天页深浅主题，刷新后保留选择。主题只影响 Agent 页面及其
+权限弹窗，工具、代码、Markdown 和图表同步适配；图表显式指定背景色时保留该配置。
+主对话和子代理面板各自跟随新内容，上滚后暂停跟随，点击“回到最新”恢复。
 
 ## 回复合并与富文本展示
 

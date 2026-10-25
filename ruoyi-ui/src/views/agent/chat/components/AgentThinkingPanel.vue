@@ -58,7 +58,7 @@ export default {
 .agent-thinking {
   width: 100%;
   margin: 0 0 9px;
-  border-left: 2px solid #e5e7eb;
+  border-left: 2px solid var(--agent-line, #e5e7eb);
 
   > button {
     display: flex;
@@ -68,7 +68,7 @@ export default {
     padding: 5px 10px;
     border: 0;
     background: transparent;
-    color: #6b7280;
+    color: var(--agent-muted, #6b7280);
     font-family: inherit;
     font-size: 12px;
     cursor: pointer;
@@ -84,7 +84,7 @@ export default {
   max-height: 260px;
   overflow: auto;
   padding: 4px 12px 9px;
-  color: #6b7280;
+  color: var(--agent-muted, #6b7280);
   font-size: 13px;
   line-height: 1.85;
   overflow-wrap: anywhere;

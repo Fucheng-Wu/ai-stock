@@ -47,7 +47,18 @@ export interface SessionSummary {
   messageCount?: number;
 }
 
+export interface SubagentRun {
+  id: string;
+  profile: string;
+  name: string;
+  task: string;
+  status: "running" | "done" | "error";
+  messages: ChatMessage[];
+  error?: string;
+}
+
 export interface ToolCall {
+  subagent?: SubagentRun;
   id: string;
   name: string;
   input?: unknown;
@@ -193,8 +204,8 @@ export type AgentUiEvent = (
   | { type: "text_delta"; sessionId: string; delta: string }
   | { type: "thinking_delta"; sessionId: string; delta: string }
   | { type: "tool_start"; sessionId: string; tool: ToolCall }
-  | { type: "tool_update"; sessionId: string; toolCallId: string; output?: string }
-  | { type: "tool_end"; sessionId: string; toolCallId: string; output?: string; isError?: boolean; durationMs?: number }
+  | { type: "tool_update"; sessionId: string; toolCallId: string; subagent?: SubagentRun; output?: string }
+  | { type: "tool_end"; sessionId: string; toolCallId: string; subagent?: SubagentRun; output?: string; isError?: boolean; durationMs?: number }
   | { type: "message_end"; sessionId: string; message: ChatMessage }
   | { type: "agent_end"; sessionId: string; contextUsage?: ContextUsage; error?: string }
   | { type: "session_updated"; sessionId: string; summary?: SessionSummary; model?: { provider: string; id: string }; thinkingLevel?: ThinkingLevel; contextUsage?: ContextUsage; primaryAgentId?: string }

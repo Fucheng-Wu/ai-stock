@@ -5,9 +5,34 @@ The embedded backend is synchronized with:
 - Source: `C:\Users\orange\Desktop\study\pi\pi-agent-gateway`
 - Branch: `main`
 - Original baseline: `94d9d752f2ada9145454e967c1721cfe68bf685e`
-- Latest selectively adapted commit: `18ab3ee28e278bf4c4308bf0208813e9a5f2e699`
-- Commit subject: `feat: improve gateway reliability, project workflow and chat UI`
-- Commit date: `2026-10-25 12:19:04 +0800`
+- Latest selectively adapted commit: `0217a7f4aa0d076870e674bdd1d73547853a6c48`
+- Commit subject: `feat: add live subagent split view and improve chat streaming UX`
+- Commit date: `2026-10-25 20:26:18 +0800`
+
+## Changes adapted from 0217a7f
+
+- Child conversation snapshots (thinking, text, business tools and errors) are streamed at an
+  80 ms maximum update frequency and attached to the parent Agent tool result. Successful and
+  failed runs retain their details through transcript conversion, JSONL and MySQL recovery.
+- The existing workbench tool-progress map carries child snapshots through reconnects and
+  intermediate parent message replacement; no additional unrestricted role is introduced.
+- Vue 2 subagent split view, per-call selection, close controls, mobile overlay and a legacy
+  result fallback for historical calls that did not record child details.
+- Collapsible tool execution groups and user-intent scroll following in both chat panes.
+  ResizeObserver follows growing content only while the reader has not paused it.
+- Light/dark chat themes, browser-local preference persistence (`orange-agent-theme`), shared
+  component color tokens and ECharts theme recreation. Theme variables are scoped to the Agent
+  page and its permission dialog; other workbench menus keep their existing appearance.
+- Workbench-specific fixes for global RuoYi aside styles, incomplete assistant replacement,
+  theme-aware chart backgrounds and exports. Explicit chart backgrounds are preserved.
+
+Upstream `backend/subagents` contains no new stock role or tool implementation in this revision.
+The workbench's stock-analyst, trusted stock skills, token forwarding, restricted primary/child
+roles and exact execution allowlists remain integration-specific.
+
+Validation: backend typecheck and 18 tests (including the real SDK, live child reconnect snapshots
+and database-record recovery); 37 frontend tests; production build; browser checks for split view,
+child updates, paused scrolling, theme persistence, chart theme and mobile layouts.
 
 ## Changes adapted from 18ab3ee
 

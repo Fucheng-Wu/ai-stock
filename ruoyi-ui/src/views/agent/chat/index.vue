@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-chat-page">
+  <div class="agent-chat-page" :data-agent-theme="theme" :class="{ 'has-subagent-panel': selectedSubagentTool }">
     <div v-if="mobileSidebarOpen" class="agent-sidebar-mask" @click="mobileSidebarOpen = false" />
 
     <aside class="agent-sidebar" :class="{ 'is-mobile-open': mobileSidebarOpen }">
@@ -87,6 +87,7 @@
           <strong>{{ activeTitle }}</strong>
         </div>
         <span v-if="activeModel" class="agent-model-badge"><i class="el-icon-cpu" /> {{ activeModel }}</span>
+        <button class="agent-icon-button" type="button" :aria-label="theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" :title="theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" @click="toggleTheme"><i :class="theme === 'dark' ? 'el-icon-sunny' : 'el-icon-moon'" /></button>
         <div class="agent-topbar__status" :class="{ 'is-online': isConnected }">
           <span />
           {{ isConnected ? '在线' : connectionLabel }}
@@ -99,7 +100,7 @@
         <button type="button" @click="recoverConnection">{{ connectionState === 'auth-expired' ? '重新登录' : '重新连接' }}</button>
       </div>
 
-      <section ref="messageScroller" class="agent-conversation" role="log" aria-label="聊天记录" aria-live="off" @scroll="handleConversationScroll">
+      <section ref="messageScroller" class="agent-conversation" role="log" aria-label="聊天记录" aria-live="off" tabindex="0" @scroll="handleConversationScroll" @wheel.passive="handleScrollWheel" @touchstart.passive="handleScrollTouchStart" @touchmove.passive="handleScrollTouchMove" @keydown="handleScrollKey">
         <div v-if="historyErrors[activeSessionId]" class="agent-request-error" role="alert">{{ historyErrors[activeSessionId] }} <button type="button" :disabled="!isConnected" @click="loadSession(activeSessionId)">重试载入</button></div>
         <div v-if="isSessionLoading" class="agent-session-loading">
           <i class="el-icon-loading" />
@@ -124,7 +125,7 @@
           <div class="agent-welcome__footnote"><i class="el-icon-lock" /> 对话记录仅当前账号可见</div>
         </div>
 
-        <div v-else class="agent-message-list">
+        <div v-else ref="messageContent" class="agent-message-list">
           <button v-if="activeState.nextBefore" class="agent-history-button" type="button" :disabled="loadingOlder || !isConnected" @click="loadOlderMessages">{{ loadingOlder ? '正在加载…' : '加载更早的消息' }}</button>
           <article
             v-for="message in activeState.messages"
@@ -154,13 +155,7 @@
                 @layout="handleRichContentLayout"
               />
 
-              <agent-tool-card
-                v-for="tool in (message.tools || [])"
-                :key="tool.id"
-                :tool="tool"
-                :now="clockNow"
-                @layout="handleRichContentLayout"
-              />
+              <agent-tool-group v-if="message.tools && message.tools.length" :tools="message.tools" :now="clockNow" @subagent="selectedSubagentId = $event" @layout="handleRichContentLayout" />
 
               <div v-if="message.role === 'user'" class="agent-user-bubble">{{ message.text }}</div>
               <agent-markdown
@@ -239,6 +234,7 @@
         </div>
       </footer>
     </main>
+    <agent-subagent-panel v-if="selectedSubagentTool" :key="activeSessionId" :tool="selectedSubagentTool" :agents="subagentTools" :now="clockNow" @close="selectedSubagentId = ''" @select="selectedSubagentId = $event" />
     <agent-permission-dialog
       v-if="pendingPermission"
       :key="pendingPermission.id"
@@ -258,7 +254,9 @@ import { groupSessions, draftKey, toolDescription, toolPreview, MAX_CACHED_SESSI
 import AgentMarkdown from './components/AgentMarkdown.vue'
 import AgentThinkingPanel from './components/AgentThinkingPanel.vue'
 import AgentPermissionDialog from './components/AgentPermissionDialog.vue'
-import AgentToolCard from './components/AgentToolCard.vue'
+import AgentToolGroup from './components/AgentToolGroup.vue'
+import AgentSubagentPanel from './components/AgentSubagentPanel.vue'
+import chatScroll from '@/utils/agent-chat-scroll'
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -266,9 +264,13 @@ function createId(prefix) {
 
 export default {
   name: 'AgentChat',
-  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog, AgentToolCard },
+  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog, AgentToolGroup, AgentSubagentPanel },
+  mixins: [chatScroll],
+  provide() { return { agentAppearance: this } },
   data() {
     return {
+      theme: (() => { try { return localStorage.getItem('orange-agent-theme') === 'dark' ? 'dark' : 'light' } catch (_) { return 'light' } })(),
+      selectedSubagentId: '',
       socketClient: null,
       connectionToken: '',
       draftUserId: '',
@@ -321,6 +323,8 @@ export default {
     }
   },
   computed: {
+    subagentTools() { return this.activeState ? this.activeState.messages.flatMap(message => message.tools || []).filter(tool => tool.name === 'Agent' || tool.subagent) : [] },
+    selectedSubagentTool() { return this.subagentTools.find(tool => tool.id === this.selectedSubagentId) || null },
     displayName() {
       const user = this.$store && this.$store.state.user
       return user && (user.nickName || user.name) || '朋友'
@@ -403,6 +407,7 @@ export default {
   },
   watch: {
     inputText() { this.saveDraft() },
+    activeSessionId() { this.selectedSubagentId = ''; this.previousScrollTop = 0; this.userPinnedScroll = false },
     '$store.state.user.token'() {
       this.handleIdentityChange()
     }
@@ -431,6 +436,10 @@ export default {
     }
   },
   methods: {
+    toggleTheme() {
+      this.theme = this.theme === 'dark' ? 'light' : 'dark'
+      try { localStorage.setItem('orange-agent-theme', this.theme) } catch (_) { /* Keep the in-memory preference. */ }
+    },
     saveDraft() {
       if (!this.draftUserId || !this.connectionToken || this.connectionToken !== getToken()) return
       try {
@@ -544,7 +553,7 @@ export default {
       const last = this.eventQueue[this.eventQueue.length - 1]
       const canMerge = event.sequence === undefined && last && last.sequence === undefined
       if (canMerge && ['text_delta', 'thinking_delta'].includes(event.type) && last.type === event.type && last.sessionId === event.sessionId) last.delta += event.delta || ''
-      else if (canMerge && event.type === 'tool_update' && last.type === event.type && last.sessionId === event.sessionId && last.toolCallId === event.toolCallId) last.output = event.output
+      else if (canMerge && event.type === 'tool_update' && last.type === event.type && last.sessionId === event.sessionId && last.toolCallId === event.toolCallId) Object.assign(last, { output: event.output, subagent: event.subagent })
       else this.eventQueue.push(event)
       if (this.eventQueue.length >= 500) { this.flushAgentEvents(); return }
       if (!this.eventFlushTimer) this.eventFlushTimer = setTimeout(() => this.flushAgentEvents(), 40)
@@ -986,7 +995,7 @@ export default {
       this.upsertSessionSummary(snapshot.summary)
       this.evictSessionCache()
       this.replayLiveEvents(id)
-      if (snapshot.summary.id === this.activeSessionId) this.$nextTick(() => this.scrollToBottom(true))
+      if (snapshot.summary.id === this.activeSessionId) this.$nextTick(() => this.scrollToBottom(!previous))
     },
     upsertSessionSummary(summary) {
       const index = this.sessions.findIndex(item => item.id === summary.id)
@@ -1032,7 +1041,7 @@ export default {
         return
       }
 
-      const shouldStick = event.sessionId === this.activeSessionId && this.isNearBottom()
+      const shouldStick = event.sessionId === this.activeSessionId && !this.userPinnedScroll
       switch (event.type) {
         case 'agent_start':
           state.isStreaming = true
@@ -1067,6 +1076,7 @@ export default {
           const tool = owner && owner.tools.find(item => item.id === event.toolCallId)
           if (tool) {
             if (event.output !== undefined) this.$set(tool, 'output', event.output)
+            if (event.subagent) this.$set(tool, 'subagent', event.subagent)
             if (event.type === 'tool_end') this.$set(tool, 'status', event.isError ? 'error' : 'done')
             if (event.durationMs !== undefined) this.$set(tool, 'durationMs', event.durationMs)
             if (event.type === 'tool_end') state.phase = state.messages.some(message => message.tools.some(item => item.status === 'running')) ? 'tool' : 'waiting'
@@ -1141,6 +1151,11 @@ export default {
     finishMessage(state, incoming) {
       if (!incoming) return
       const normalized = this.normalizeMessage(incoming)
+      normalized.tools.forEach(tool => {
+        const owner = state.messages.find(message => message.tools.some(item => item.id === tool.id))
+        const previous = owner && owner.tools.find(item => item.id === tool.id)
+        if (previous && previous.subagent && !tool.subagent) tool.subagent = previous.subagent
+      })
       if (normalized.role === 'user') {
         const optimisticIndex = state.messages.findIndex(item => item.role === 'user' && String(item.id).startsWith('optimistic-') && item.text === normalized.text)
         if (optimisticIndex >= 0) {
@@ -1368,22 +1383,16 @@ export default {
       }
       return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
     },
-    handleConversationScroll() {
-      this.userPinnedScroll = !this.isNearBottom()
-    },
     isNearBottom() {
       const element = this.$refs.messageScroller
       if (!element) return true
       return element.scrollHeight - element.scrollTop - element.clientHeight < 140
     },
-    scrollToBottom(force = false) {
-      const element = this.$refs.messageScroller
-      if (!element || (!force && this.userPinnedScroll)) return
-      element.scrollTop = element.scrollHeight
-      this.userPinnedScroll = false
-    }
+    scrollToBottom: chatScroll.methods.scrollToBottom
   }
 }
 </script>
 
 <style lang="scss" scoped src="./chat.scss" />
+
+<style lang="scss" src="./theme.scss" />

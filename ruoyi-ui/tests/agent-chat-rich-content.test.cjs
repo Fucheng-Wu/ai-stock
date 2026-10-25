@@ -49,12 +49,15 @@ const { parseAgentChart } = loadSource('src/utils/agent-echarts.js')
 const { groupSessions, draftKey, MAX_CACHED_SESSIONS, MAX_VISIBLE_MESSAGES } = loadSource('src/utils/agent-chat-state.js')
 const MarkdownComponent = loadSource('src/views/agent/chat/components/AgentMarkdown.vue', { './AgentCodeBlock.vue': {}, './AgentEchart.vue': {} }).default
 const ToolCardComponent = loadSource('src/views/agent/chat/components/AgentToolCard.vue').default
+const ChatScroll = loadSource('src/utils/agent-chat-scroll.js').default
 let workbenchToken
 const Chat = loadSource('src/views/agent/chat/index.vue', {
   './components/AgentMarkdown.vue': {},
   './components/AgentThinkingPanel.vue': {},
   './components/AgentPermissionDialog.vue': {},
   './components/AgentToolCard.vue': {},
+  './components/AgentToolGroup.vue': {},
+  './components/AgentSubagentPanel.vue': {},
   '@/utils/auth': { getToken: () => workbenchToken }
 }).default
 
@@ -109,6 +112,13 @@ test('invalid JSON and JavaScript chart code produce a recoverable parse error',
   assert.throws(() => parseAgentChart('option = { series: [] }'), /JSON/)
   assert.throws(() => parseAgentChart('{"series": []}'), /series/)
   assert.throws(() => parseAgentChart('{"__proto__":{},"series":[{"type":"pie"}]}'), /无效字段/)
+})
+
+test('chart defaults follow the chat theme while explicit chart backgrounds are preserved', () => {
+  const source = JSON.stringify({ series: [{ type: 'line', data: [1, 2] }] })
+  assert.equal(parseAgentChart(source).backgroundColor, '#fff')
+  assert.equal(parseAgentChart(source, 'dark').backgroundColor, '#292a2d')
+  assert.equal(parseAgentChart(JSON.stringify({ backgroundColor: '#123456', series: [{ type: 'pie', data: [1] }] }), 'dark').backgroundColor, '#123456')
 })
 
 test('model chart tooltips use rich text and external navigation/images are removed', () => {
@@ -183,6 +193,70 @@ function createChatState() {
   const emit = event => instance.applyAgentEvent({ sessionId: 'session', ...event })
   return { instance, state, emit }
 }
+
+test('child progress survives parent replacement, late completion and a restored snapshot', () => {
+  const { instance, state, emit } = createChatState()
+  const tool = { id: 'delegate', name: 'Agent', input: { profile: 'stock-analyst' }, status: 'running' }
+  const run = { id: 'child', profile: 'stock-analyst', name: '股票子代理', task: '分析', status: 'running', messages: [{ id: 'child-answer', role: 'assistant', text: '实时分析' }] }
+  emit({ type: 'agent_start' })
+  emit({ type: 'tool_start', tool })
+  emit({ type: 'tool_update', toolCallId: tool.id, subagent: run })
+  assert.equal(instance.selectedSubagentTool, null)
+  instance.selectedSubagentId = tool.id
+  assert.equal(instance.selectedSubagentTool.subagent.messages[0].text, '实时分析')
+  emit({ type: 'message_end', message: { id: 'reply', role: 'assistant', text: '', tools: [tool] } })
+  assert.deepEqual(state.messages[1].tools[0].subagent, run)
+  const done = { ...run, status: 'done' }
+  emit({ type: 'tool_end', toolCallId: tool.id, output: '分析完成', subagent: done })
+  emit({ type: 'agent_end' })
+  assert.equal(state.messages[1].tools[0].subagent.status, 'done')
+  const snapshot = JSON.parse(JSON.stringify({ summary: state.summary, messages: state.messages, isStreaming: false }))
+  instance.installSnapshot(snapshot)
+  assert.deepEqual(instance.selectedSubagentTool.subagent, done)
+})
+
+test('theme preference is restored and switching still works if local storage is unavailable', () => {
+  const original = globalThis.localStorage
+  const stored = new Map([['orange-agent-theme', 'dark']])
+  try {
+    globalThis.localStorage = { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value) }
+    const { instance } = createChatState()
+    assert.equal(instance.theme, 'dark')
+    instance.toggleTheme()
+    assert.equal(stored.get('orange-agent-theme'), 'light')
+    globalThis.localStorage = { getItem() { throw new Error('blocked') }, setItem() { throw new Error('blocked') } }
+    assert.equal(Chat.data().theme, 'light')
+    instance.toggleTheme()
+    assert.equal(instance.theme, 'dark')
+  } finally {
+    if (original === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = original
+  }
+})
+
+test('content growth cannot resume paused scroll following; explicit return and scrolling to bottom can', () => {
+  const area = { scrollTop: 200, scrollHeight: 600, clientHeight: 400 }
+  const instance = { ...ChatScroll.data(), $refs: { messageScroller: area } }
+  Object.entries(ChatScroll.methods).forEach(([name, method]) => { instance[name] = method.bind(instance) })
+  instance.previousScrollTop = 200
+  instance.handleScrollWheel({ deltaY: -1 })
+  area.scrollHeight = 1200
+  instance.scrollToBottom()
+  instance.handleConversationScroll()
+  assert.equal(instance.userPinnedScroll, true)
+  assert.equal(area.scrollTop, 200)
+  instance.scrollToBottom(true)
+  assert.equal(instance.userPinnedScroll, false)
+  instance.handleScrollKey({ key: 'PageUp' })
+  assert.equal(instance.userPinnedScroll, true)
+  instance.previousScrollTop = 300
+  area.scrollTop = 800
+  instance.handleConversationScroll()
+  assert.equal(instance.userPinnedScroll, false)
+  instance.handleScrollTouchStart({ touches: [{ clientY: 100 }] })
+  instance.handleScrollTouchMove({ touches: [{ clientY: 150 }] })
+  assert.equal(instance.userPinnedScroll, true)
+})
 
 test('two tool calls, intermediate message_end and the final answer stay in one live reply', () => {
   const { state, emit } = createChatState()
