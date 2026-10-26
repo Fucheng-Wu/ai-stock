@@ -95,8 +95,8 @@ deepseek:
 - 页面：`ruoyi-ui/src/views/agent/chat/index.vue`，提供多会话、流式回复、停止生成、思考过程和工具调用展示。同一轮直到 `agent_end` 才结束流式气泡，不能在中间 `message_end` 清空流式消息 ID；工具结果按调用 ID 回写。
 - 富文本：`ruoyi-ui/src/views/agent/chat/components/AgentMarkdown.vue` 使用 `markdown-it`，代码高亮/复制由 `AgentCodeBlock.vue` 提供，顶层 `echarts` JSON 围栏由 `AgentEchart.vue` 渲染为可预览、查看配置和下载的图表；输出约定在 `agent-gateway/backend/src/lib/response-format.ts`。
 - 页面样式集中在同目录的 `chat.scss`，工具卡片为 `AgentToolCard.vue`；Markdown流式渲染每60毫秒合并，长工具输出默认预览末尾12,000字。已选择性同步上游 `f3afb9c`，记录见 `agent-gateway/UPSTREAM.md`；事件按 `epoch/sequence` 去重和重新同步，保持现有用户隔离和角色限制。
-- 图像问答：支持上传、粘贴、拖拽 PNG/JPEG/GIF/WebP，最多4张、每张5 MiB，可仅发送图片；输入框下方提供模型、思考强度和上下文工具栏。需选择标有“图像”的模型，前后端均校验能力。图片随 MySQL/JSONL 历史保存，本轮图片自动传给股票子代理并在子代理面板展示；未发送图片草稿仅在页面内存按用户/会话隔离，刷新需重新选择。
-- 子代理实时过程：`AgentSubagentPanel.vue` 展示股票子代理的思考、工具和回复，桌面分屏、手机覆盖显示；`AgentToolGroup.vue` 折叠工具组。进度每80毫秒合并，通过现有工具进度快照恢复，最终过程随 Agent 工具结果保存在 MySQL/JSONL；旧调用可查看原始结果。
+- 图像问答：支持上传、粘贴、拖拽 PNG/JPEG/GIF/WebP，最多4张、每张5 MiB，可仅发送图片；输入框下方提供模型、思考强度和上下文工具栏。需选择标有“图像”的模型，前后端均校验能力。图片随 MySQL/JSONL 历史保存，本轮图片自动传给所调用的子代理并在子代理面板展示；未发送图片草稿仅在页面内存按用户/会话隔离，刷新需重新选择。
+- 子代理实时过程：`AgentSubagentPanel.vue` 展示股票分析或信息检索子代理的思考、工具和回复，桌面分屏、手机覆盖显示；`AgentToolGroup.vue` 折叠工具组。进度每80毫秒合并，通过现有工具进度快照恢复，最终过程随 Agent 工具结果保存在 MySQL/JSONL；旧调用可查看原始结果。
 - 主题：Agent 页右上角支持深浅主题切换，偏好以 `orange-agent-theme` 保存在 localStorage；`theme.scss` 只作用于聊天页和其权限弹窗，Markdown、代码、工具、子代理与图表同步切换。`agent-chat-scroll.js` 在用户上滚后暂停跟随，点击回到最新后恢复，内容增长不重置阅读位置。
 - 后端：`agent-gateway/backend`，基于 Hono、WebSocket 和 `@earendil-works/pi-coding-agent`，源码与项目一同维护和启动。
 - 共享协议：`agent-gateway/shared/types.ts`，前后端使用 WebSocket v1 消息协议。
@@ -108,9 +108,9 @@ deepseek:
 - 生产部署：nginx 反代与安全注意事项见 `docs/agent-chat-deployment.md`。
 - 菜单 SQL：`sql/agent_chat_menu.sql`（菜单 2018，order=8），默认只授权角色 1、4。
 - 权限标识：`agent:chat:use` 用于聊天，`agent:chat:manage` 单独控制模型、认证、技能、插件和 MCP 配置管理（按钮菜单2019）；均由网关在执行命令前校验。草稿按用户及会话保存在 sessionStorage；流式事件合并刷新，页面缓存最多8个会话、每个会话最多120条可见消息。
-- 主 Agent 固定为 `general`（普通 Agent），唯一工具为 `Agent`，且只能调用 `stock-analyst` 股票子代理；股票问题必须委派，其他问题可正常文字回答。旧会话和 MySQL 恢复也统一使用受限角色，不提供 Build/Plan 或全局自定义角色。
+- 主 Agent 固定为 `general`（普通 Agent），唯一工具为 `Agent`，只能调用 `stock-analyst` 股票子代理或 `web-researcher` 信息检索子代理；股票行情与分析必须委派给前者，各领域公开信息检索、新闻和来源核实委派给后者。混合任务先检索，再将带来源、日期与不确定性的资料交给股票子代理分析；需要补充证据时由主 Agent 协调。其他问题可正常文字回答。旧会话和 MySQL 恢复也统一使用受限角色，不提供 Build/Plan 或全局自定义角色。
 - 工具限制：`agent-gateway/backend/src/lib/agent-policy.ts` 定义精确白名单，`permissions.ts` 在执行时再次检查。两层代理均禁止内部文件/目录/代码查询、写入、编辑、终端、执行代码和 MCP；不自动加载全局扩展、技能、提示模板或项目上下文。角色文件不能扩大权限，子代理不能递归委派。
-- 股票子代理：`agent-gateway/backend/subagents/stock-analyst/agent.md`，专属回答股票、ETF、证券知识和财经资讯。同目录的 `tools.ts` 为其注册 `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，通过 `STOCK_API_BASE_URL` 复用 Java 服务；按每轮 prompt 透传当前用户登录身份，不将令牌写入模型上下文或会话数据库，权限沿用 `stock:analyzer:analyze`。名称提问先搜索，只有唯一精确匹配才自动分析，否则让用户确认候选。
-- 股票技能：`agent-gateway/backend/skills/stock-520/SKILL.md` 负责三步分析流程与证据解读，数值和规则判定仍由 Java 引擎提供；`stock-research/SKILL.md` 负责公开资讯检索与来源引用。服务端直接注入指定技能正文，无需开放 `read`。仅提供公开行情和分析，不包含自选或持仓操作。
-- 联网搜索：`agent-gateway/backend/subagents/stock-analyst/web-search.ts` 为股票子代理提供 `web_search`，使用 Tavily 固定接口，服务端配置 `TAVILY_API_KEY`；未配置时仅搜索不可用，不影响股票业务工具。
+- 股票子代理：`agent-gateway/backend/subagents/stock-analyst/agent.md`，专属回答股票、ETF、证券知识、行情和520战法，不直接联网检索；可解读主 Agent 提供的外部证据，需要补充资讯时向主 Agent 提出检索需求。同目录的 `tools.ts` 为其注册 `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，通过 `STOCK_API_BASE_URL` 复用 Java 服务；按每轮 prompt 透传当前用户登录身份，不将令牌写入模型上下文或会话数据库，权限沿用 `stock:analyzer:analyze`。名称提问先搜索，只有唯一精确匹配才自动分析，否则让用户确认候选。
+- 子代理技能：`agent-gateway/backend/skills/stock-520/SKILL.md` 仅注入股票子代理，负责三步分析流程与证据解读，数值和规则判定仍由 Java 引擎提供；`web-research/SKILL.md` 仅注入信息检索子代理，负责各领域公开资料、时效核实与来源引用。服务端直接注入指定技能正文，无需开放 `read`。股票工具仅提供公开行情和分析，不包含自选或持仓操作。
+- 信息检索：`agent-gateway/backend/subagents/web-researcher/agent.md` 定义独立信息检索子代理，同目录 `web-search.ts` 仅为其提供 `web_search`，使用 Tavily 固定接口，服务端配置 `TAVILY_API_KEY`；未配置时仅搜索不可用，不影响股票业务工具。两子代理的工具、技能与执行权限精确隔离，可在管理页分别启停，均不能相互或递归委派。
 - Agent 新会话默认使用 DeepSeek（`deepseek-flash`），可通过网关 `AGENT_DEFAULT_MODEL` 指定 `deepseek` Provider 下的已配置型号；认证使用网关 `DEEPSEEK_API_KEY` 或 Agent 设置页，不自动读取 Java 股票分析服务的 Key。

@@ -10,6 +10,6 @@
     "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "subagents/stock-analyst/**/*.ts", "../shared/**/*.ts"]
+  "include": ["src/**/*.ts", "subagents/**/*.ts", "../shared/**/*.ts"]
 }
 

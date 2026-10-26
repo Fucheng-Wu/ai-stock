@@ -6,11 +6,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { STOCK_TOOLS } from "../src/lib/agent-policy.js";
+import { RESEARCH_TOOLS, STOCK_TOOLS } from "../src/lib/agent-policy.js";
 import { createPermissionExtension, PermissionBroker, type RoleRuntime } from "../src/lib/permissions.js";
 import { PrimaryAgentRegistry } from "../src/lib/primary-agents.js";
 import { createSession, resumeSessionFromDatabase, switchPrimaryAgent } from "../src/lib/session-factory.js";
 import { createSharedResources } from "../src/lib/shared-resources.js";
+import { FeatureManager } from "../src/lib/feature-manager.js";
 import { buildPersistedRecord } from "../src/lib/session-record.js";
 import { attachEventRelay } from "../src/lib/event-relay.js";
 import { convertActiveMessages } from "../src/lib/message-converter.js";
@@ -33,31 +34,46 @@ async function runtime(): Promise<RoleRuntime> {
   };
 }
 
-test("primary permits only stock delegation, including when profile tools and permissions are widened", async () => {
+test("primary permits only stock and research delegation, even when profile capabilities are widened", async () => {
   const role = await runtime();
   role.profile.tools = ["*"];
   role.profile.permissions = [{ action: "*", resource: "*", effect: "allow" }];
   const call = await guard(role);
   assert.equal(await call("Agent", { profile: "stock-analyst", task: "行情" }), undefined);
-  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "mcp", "web_fetch", ...STOCK_TOOLS]) {
+  assert.equal(await call("Agent", { profile: "web-researcher", task: "公开信息" }), undefined);
+  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "mcp", "web_fetch", ...STOCK_TOOLS, ...RESEARCH_TOOLS]) {
     assert.equal((await call(tool, { path: "secret", query: "test" }))?.block, true, tool);
   }
-  for (const profile of ["general-purpose", "explore", "plan", "build", "stock-analyst "]) {
+  for (const profile of ["general-purpose", "explore", "plan", "build", "stock-analyst ", "web-researcher ", "WEB-RESEARCHER"]) {
     assert.equal((await call("Agent", { profile, task: "read files" }))?.block, true, profile);
   }
 });
 
-test("stock child permits business tools and web search but blocks internal tools and recursive delegation", async () => {
+test("stock child permits only business tools and blocks web search and recursive delegation", async () => {
   const call = await guard(await runtime(), {
     id: "stock-analyst", name: "stock", tools: ["*"],
     permissions: [{ action: "*", resource: "*", effect: "allow" }],
   });
   for (const tool of STOCK_TOOLS) assert.equal(await call(tool, { query: "stock" }), undefined, tool);
-  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "Agent", "web_fetch", "mcp_read"]) {
+  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "Agent", "web_search", "web_fetch", "mcp_read"]) {
     assert.equal((await call(tool))?.block, true, tool);
   }
   const unknown = await guard(await runtime(), { id: "explore", name: "explore", tools: ["*"] });
   assert.equal((await unknown("stock_quote"))?.block, true);
+});
+
+test("research child permits only public search, regardless of widened profile capabilities", async () => {
+  const role = await runtime();
+  const call = await guard(role, {
+    id: "web-researcher", name: "research", tools: ["*"],
+    permissions: [{ action: "*", resource: "*", effect: "allow" }],
+  });
+  assert.equal(await call("web_search", { query: "公开信息" }), undefined);
+  for (const tool of [...STOCK_TOOLS, "Agent", "read", "grep", "find", "ls", "write", "edit", "bash", "execute", "web_fetch", "mcp_read"]) {
+    assert.equal((await call(tool))?.block, true, tool);
+  }
+  role.profile.permissions.push({ action: "web_search", resource: "*", effect: "deny" });
+  assert.equal((await call("web_search", { query: "公开信息" }))?.block, true);
 });
 
 test("cancellation and parent deny rules also block otherwise permitted stock calls", async () => {
@@ -80,7 +96,16 @@ async function listen(server: Server): Promise<number> {
 test("real SDK delegates with isolated tools and injected skills, forwards identity, and restricts recovered sessions", { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "stock-agent-sdk-"));
   const agentDir = join(root, "agent");
-  const saved = Object.fromEntries(["PI_AGENT_DIR", "AGENT_DEFAULT_MODEL", "DEEPSEEK_API_KEY", "STOCK_API_BASE_URL"].map((key) => [key, process.env[key]]));
+  const saved = Object.fromEntries(["PI_AGENT_DIR", "AGENT_DEFAULT_MODEL", "DEEPSEEK_API_KEY", "STOCK_API_BASE_URL", "TAVILY_API_KEY"].map((key) => [key, process.env[key]]));
+  const originalFetch = globalThis.fetch;
+  let researchRequests = 0;
+  globalThis.fetch = async (url, options) => {
+    if (url !== "https://api.tavily.com/search") return originalFetch(url, options);
+    researchRequests++;
+    assert.equal((options?.headers as Record<string, string>).Authorization, "Bearer test-search-key");
+    assert.equal(JSON.parse(String(options?.body)).query, "公开技术资料");
+    return new Response(JSON.stringify({ results: [{ title: "官方资料", url: "https://example.com/docs", content: "公开技术资料", published_date: "2026-10-24" }] }));
+  };
   const requests: Array<Record<string, any>> = [];
   const token = "test-user-token-should-never-reach-model";
   const image = { type: "image" as const, mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGO0afrAQApgIkk1w6gG4gATkergYFQDMYDkUAIAVSsBzrxEmLQAAAAASUVORK5CYII=" };
@@ -93,6 +118,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     response.end(JSON.stringify({ code: 200, data: { name: "测试股票", price: 100, time: "2026-10-24 15:00:00" } }));
   });
   let childFails = false;
+  let requestedProfile = "stock-analyst";
   const modelServer = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -100,15 +126,16 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     requests.push(body);
     const toolNames = body.tools?.map((tool: any) => tool.function.name) ?? [];
     const primary = toolNames.includes("Agent");
+    const research = toolNames.includes("web_search");
     if (!primary && childFails) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { message: "child model unavailable", type: "invalid_request_error" } }));
       return;
     }
     const afterTool = body.messages.at(-1)?.role === "tool";
-    const tool = primary ? "Agent" : "stock_quote";
-    const args = primary ? { profile: "stock-analyst", task: "查询 sh600519 最新行情并注明来源" } : { stockCode: "sh600519" };
-    const delta = afterTool ? { content: primary ? "已取得股票子代理结果。" : "测试股票最新价100，来源腾讯行情。" } : {
+    const tool = primary ? "Agent" : research ? "web_search" : "stock_quote";
+    const args = primary ? { profile: requestedProfile, task: requestedProfile === "web-researcher" ? "检索公开技术资料并注明来源" : "查询 sh600519 最新行情并注明来源" } : research ? { query: "公开技术资料" } : { stockCode: "sh600519" };
+    const delta = afterTool ? { content: primary ? "已取得子代理结果。" : research ? "公开技术资料，来源[官方资料](https://example.com/docs)，发布于2026-10-24。" : "测试股票最新价100，来源腾讯行情。" } : {
       tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: tool, arguments: JSON.stringify(args) } }],
     };
     response.writeHead(200, { "content-type": "text/event-stream" });
@@ -137,7 +164,49 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     process.env.AGENT_DEFAULT_MODEL = "gateway-test";
     process.env.DEEPSEEK_API_KEY = "test-only";
     process.env.STOCK_API_BASE_URL = `http://127.0.0.1:${stockPort}`;
+    process.env.TAVILY_API_KEY = "test-search-key";
     const resources = await createSharedResources(root);
+    // Settings are persisted in a fixture backend, never in the checkout used by the running gateway.
+    const fixtureBackend = join(root, "backend");
+    for (const id of ["stock-analyst", "web-researcher"]) {
+      await mkdir(join(fixtureBackend, "subagents", id), { recursive: true });
+      await writeFile(join(fixtureBackend, "subagents", id, "agent.md"), [
+        "---", `name: ${id}`, 'tools: ["*"]', 'skills: ["*"]', 'extensions: ["unsafe"]',
+        'permissions: [{"action":"*","resource":"*","effect":"allow"}]', "---", "测试角色",
+      ].join("\n"));
+    }
+    await mkdir(join(fixtureBackend, "skills", "web-research"), { recursive: true });
+    await writeFile(join(fixtureBackend, "skills", "web-research", "SKILL.md"), "---\nname: web-research\ndescription: 测试检索\n---\n仅检索公开资料。");
+    const features = new FeatureManager(root, agentDir, resources.settingsManager, resources.modelRuntime, fixtureBackend, resources.permissions);
+    let settings = await features.getSubagentSettings();
+    assert.deepEqual(settings.profiles.map(profile => profile.id), ["stock-analyst", "web-researcher"]);
+    assert.deepEqual(settings.profiles.map(profile => profile.tools), [STOCK_TOOLS, RESEARCH_TOOLS]);
+    assert.deepEqual(settings.profiles.map(profile => profile.skills), [["stock-520"], ["web-research"]]);
+    assert.ok(settings.profiles.every(profile => profile.extensions?.length === 0 && profile.permissions?.[0].effect === "deny"));
+    await features.setSubagentProfileEnabled("web-researcher", false);
+    settings = await features.getSubagentSettings();
+    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [true, false]);
+    await features.setSubagentProfileEnabled("web-researcher", true);
+    await features.setSubagentProfileEnabled("stock-analyst", false);
+    settings = await features.getSubagentSettings();
+    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [false, true]);
+    for (const id of ["stock-analyst", "web-researcher"]) await assert.rejects(features.deleteSubagentProfile(id), /不能删除/);
+    // The tool schema exposes only the currently enabled researcher.
+    const researchOnly = await createSession({ ...resources, features }, "1");
+    activeSessions.push(researchOnly);
+    requestedProfile = "web-researcher";
+    await researchOnly.session.prompt("检索公开技术资料", { expandPromptTemplates: false });
+    const schema = requests[0].tools[0].function.parameters.properties.profile;
+    assert.deepEqual(schema.anyOf.map((option: { const: string }) => option.const), ["web-researcher"]);
+    assert.equal(researchRequests, 1);
+    // Existing sessions must also honor a role disabled after their tool schema was registered.
+    await features.setSubagentProfileEnabled("web-researcher", false);
+    await researchOnly.session.prompt("再次检索", { expandPromptTemplates: false });
+    assert.equal(researchRequests, 1);
+    assert.match(convertActiveMessages(researchOnly).flatMap(message => message.tools ?? []).at(-1)?.output ?? "", /子代理角色不可用/);
+    requests.length = 0;
+    researchRequests = 0;
+    requestedProfile = "stock-analyst";
     const active = await createSession(resources, "1");
     activeSessions.push(active);
     const otherUser = await createSession(resources, "2");
@@ -201,7 +270,8 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
       assert.ok(!serialized.includes("PRIVATE_APPEND_PROMPT_MUST_NOT_APPEAR"));
       if (!names.includes("Agent")) {
         assert.ok(serialized.includes("已加载技能：stock-520"));
-        assert.ok(serialized.includes("已加载技能：stock-research"));
+        assert.ok(!serialized.includes("已加载技能：web-research"));
+        assert.ok(!serialized.includes("已加载技能：stock-research"));
       }
     }
     assert.equal((await resources.features.getSubagentSettings()).active, 0);
@@ -221,10 +291,43 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     assert.deepEqual(restoredConversation.session.messages, JSON.parse(JSON.stringify(active.session.messages)));
     assert.equal(restoredConversation.userId, "1");
     assert.deepEqual(convertActiveMessages(restoredConversation).flatMap(message => message.tools ?? [])[0]?.subagent, JSON.parse(JSON.stringify(child)));
+    // The same real SDK session can delegate non-stock research, with no stock tools or skills.
+    requestedProfile = "web-researcher";
+    const beforeResearch = requests.length;
+    await runWithStockToolToken(token, () => active.session.prompt("检索公开技术资料", { expandPromptTemplates: false }));
+    const researchBodies = requests.slice(beforeResearch);
+    assert.equal(researchBodies.length, 4);
+    for (const body of researchBodies) {
+      const names: string[] = body.tools.map((tool: any) => tool.function.name);
+      assert.deepEqual([...names].sort(), names.includes("Agent") ? ["Agent"] : [...RESEARCH_TOOLS]);
+      const serialized = JSON.stringify(body);
+      assert.ok(!serialized.includes(token));
+      assert.ok(!serialized.includes("test-search-key"));
+      assert.ok(!serialized.includes("PRIVATE_PROJECT_CONTEXT_MUST_NOT_APPEAR"));
+      assert.ok(!serialized.includes("PRIVATE_APPEND_PROMPT_MUST_NOT_APPEAR"));
+      if (!names.includes("Agent")) {
+        assert.ok(serialized.includes("已加载技能：web-research"));
+        assert.ok(!serialized.includes("已加载技能：stock-520"));
+        assert.ok(!serialized.includes("data:image/"), "previous turn images leaked into research");
+      }
+    }
+    assert.equal(stockRequests, 1, "research must not query the stock service");
+    assert.equal(researchRequests, 1);
+    const researchRun = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1)?.subagent;
+    assert.equal(researchRun?.profile, "web-researcher");
+    assert.equal(researchRun?.name, "信息检索");
+    assert.equal(researchRun?.status, "done");
+    assert.ok(researchRun?.messages.some(message => message.tools?.some(tool => tool.name === "web_search" && tool.status === "done")));
+    const restoredResearch = await resumeSessionFromDatabase(resources, { ...buildPersistedRecord(active, root), sessionPath: undefined });
+    activeSessions.push(restoredResearch);
+    assert.deepEqual(convertActiveMessages(restoredResearch).flatMap(message => message.tools ?? []).at(-1)?.subagent, JSON.parse(JSON.stringify(researchRun)));
+    assert.equal((await resources.features.getSubagentSettings()).active, 0);
     // The SDK creates failed tool results itself; our tool_result hook must attach child details.
+    requestedProfile = "stock-analyst";
     childFails = true;
+    const beforeFailure = requests.length;
     await runWithStockToolToken(token, () => active.session.prompt("再查询一次行情", { expandPromptTemplates: false }));
-    const secondChildRequest = requests.slice(4).find(body => !body.tools.some((tool: any) => tool.function.name === "Agent"));
+    const secondChildRequest = requests.slice(beforeFailure).find(body => !body.tools.some((tool: any) => tool.function.name === "Agent"));
     assert.ok(secondChildRequest);
     assert.ok(!JSON.stringify(secondChildRequest.messages).includes("data:image/"), "previous turn images must not leak into an unrelated child task");
     const failedTool = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1);
@@ -241,6 +344,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     assert.equal(recovered.role.profile.id, "general");
     assert.deepEqual(recovered.session.getActiveToolNames(), ["Agent"]);
   } finally {
+    globalThis.fetch = originalFetch;
     for (const active of activeSessions) { active.session.dispose(); active.onDispose?.(); }
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

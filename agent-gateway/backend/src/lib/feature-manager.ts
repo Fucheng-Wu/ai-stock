@@ -18,9 +18,9 @@ import { isImageAttachment } from "../../../shared/images.js";
 import { trackSubagent } from "./subagent-progress.js";
 import { Type } from "typebox";
 import { createPermissionExtension, parsePermissions, type PermissionBroker, type RoleRuntime } from "./permissions.js";
-import { STOCK_PERMISSIONS, STOCK_SKILLS, STOCK_SUBAGENT_ID, STOCK_TOOLS } from "./agent-policy.js";
+import { STOCK_SUBAGENT_ID, SUBAGENT_POLICIES } from "./agent-policy.js";
 import { createStockToolsExtension } from "../../subagents/stock-analyst/tools.js";
-import { createWebSearchExtension } from "../../subagents/stock-analyst/web-search.js";
+import { createWebSearchExtension } from "../../subagents/web-researcher/web-search.js";
 import { AGENT_RESPONSE_FORMAT } from "./response-format.js";
 import type {
   FeatureSettings,
@@ -211,21 +211,24 @@ export class FeatureManager {
 
   async getSubagentSettings(): Promise<SubagentSettingsInfo> {
     const stored = await this.readStoredSubagentSettings();
-    const filePath = join(this.projectAgentsDir, STOCK_SUBAGENT_ID, "agent.md");
-    const profile = parseCustomProfile(await readFile(filePath, "utf8"), filePath, "project");
-    if (!profile || profile.id !== STOCK_SUBAGENT_ID) throw new Error("股票子代理配置无效");
     const disabled = Array.isArray(stored.disabledBuiltIns) ? stored.disabledBuiltIns : [];
+    const profiles = await Promise.all(SUBAGENT_POLICIES.map(async (policy) => {
+      const filePath = join(this.projectAgentsDir, policy.id, "agent.md");
+      const profile = parseCustomProfile(await readFile(filePath, "utf8"), filePath, "project");
+      if (!profile || profile.id !== policy.id) throw new Error(`子代理配置无效：${policy.id}`);
+      return {
+        ...profile, tools: [...policy.tools], skills: [...policy.skills], extensions: [],
+        permissions: policy.permissions.map((rule) => ({ ...rule })),
+        enabled: !disabled.includes(policy.id),
+      };
+    }));
     const maxConcurrent = Number.isInteger(stored.maxConcurrent) && Number(stored.maxConcurrent) >= 1 && Number(stored.maxConcurrent) <= MAX_SUBAGENTS
       ? Number(stored.maxConcurrent) : 3;
     return {
       enabled: stored.builtInEnabled !== false,
       maxConcurrent,
       active: this.activeSubagents,
-      profiles: [{
-        ...profile, tools: [...STOCK_TOOLS], skills: [...STOCK_SKILLS], extensions: [],
-        permissions: STOCK_PERMISSIONS.map((rule) => ({ ...rule })),
-        enabled: !disabled.includes(STOCK_SUBAGENT_ID),
-      }],
+      profiles,
     };
   }
   async setSubagentSettings(patch: { enabled?: boolean; maxConcurrent?: number }): Promise<void> {
@@ -258,12 +261,12 @@ export class FeatureManager {
     extensions?: string[];
     scope: "global" | "project";
   }): Promise<void> {
-    throw new Error("当前工作台仅允许使用项目预置的股票分析子代理，不支持添加其他角色。");
+    throw new Error("当前工作台仅允许使用项目预置的股票分析和信息检索子代理，不支持添加其他角色。");
 
   }
 
   async deleteSubagentProfile(profileId: string): Promise<void> {
-    if (profileId === STOCK_SUBAGENT_ID) throw new Error("不能删除股票分析子代理，可以在设置中停用。");
+    if (SUBAGENT_POLICIES.some(policy => policy.id === profileId)) throw new Error("不能删除预置子代理，可以在设置中停用。");
     const profile = (await this.getSubagentSettings()).profiles.find((item) => item.id === profileId);
     if (!profile || profile.builtIn || profile.managedByPrimary || !profile.filePath) throw new Error("只能删除独立定义的自定义子代理；共享角色请在主代理目录管理");
     const allowedRoots = [resolve(this.globalAgentsDir), resolve(this.projectAgentsDir)];
@@ -297,7 +300,7 @@ export class FeatureManager {
         exposure: "model-only",
         executionMode: "parallel",
         parameters: Type.Object({
-          profile: Type.Literal(STOCK_SUBAGENT_ID, { description: "只允许股票分析子代理" }),
+          profile: Type.Union(enabledProfiles.map(profile => Type.Literal(profile.id)), { description: "股票行情与分析选择 stock-analyst；公开信息检索选择 web-researcher" }),
           task: Type.String({ minLength: 1, description: "完整、独立的任务说明" }),
         }),
         execute: async (toolCallId, params, signal, onUpdate, ctx) => {
@@ -305,7 +308,8 @@ export class FeatureManager {
           if (!latest.enabled) throw new Error("子代理功能已关闭");
           const profile = latest.profiles.find((item) => item.id === params.profile && item.enabled);
           if (!profile) throw new Error(`子代理角色不可用：${params.profile}`);
-          if (profile.id !== STOCK_SUBAGENT_ID) throw new Error("普通 Agent 只能调用股票分析子代理");
+          const policy = SUBAGENT_POLICIES.find(item => item.id === profile.id);
+          if (!policy) throw new Error("普通 Agent 只能调用股票分析或信息检索子代理");
           if (!ctx.model) throw new Error("当前会话尚未选择模型");
           if (this.activeSubagents >= latest.maxConcurrent) throw new Error(`子代理并发已达到上限 ${latest.maxConcurrent}`);
           if (signal?.aborted) throw new Error("子代理任务已取消");
@@ -317,9 +321,9 @@ export class FeatureManager {
           let failure: string | undefined;
           try {
             // Load only trusted, explicitly named project skills on the server, never via a model file tool.
-            const skillBodies = await Promise.all(STOCK_SKILLS.map(async (name) => {
+            const skillBodies = await Promise.all(policy.skills.map(async (name) => {
               const source = await readFile(join(this.projectSkillsDir, name, "SKILL.md"), "utf8");
-              if (Buffer.byteLength(source, "utf8") > 1_000_000) throw new Error(`股票技能 ${name} 文件过大`);
+              if (Buffer.byteLength(source, "utf8") > 1_000_000) throw new Error(`子代理技能 ${name} 文件过大`);
               if (/^disable-model-invocation\s*:\s*true\s*$/m.test(source.split(/^---\s*$/m)[1] ?? "")) return "";
               return `## 已加载技能：${name}\n${source.replace(/^---\s*\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim()}`;
             }));
@@ -335,8 +339,7 @@ export class FeatureManager {
               appendSystemPrompt: [],
               extensionFactories: [
                 createPermissionExtension(runtime, this.permissionBroker, ctx.cwd, profile),
-                createStockToolsExtension(),
-                createWebSearchExtension(),
+                profile.id === STOCK_SUBAGENT_ID ? createStockToolsExtension() : createWebSearchExtension(),
               ],
               skillsOverride: () => ({ skills: [], diagnostics: [] }),
               systemPrompt: childPrompt,
@@ -353,7 +356,7 @@ export class FeatureManager {
               sessionManager: manager,
               model: ctx.model,
               thinkingLevel: ctx.thinkingLevel,
-              tools: [...STOCK_TOOLS],
+              tools: [...policy.tools],
             });
             childSession = created.session;
             await childSession.bindExtensions({});
@@ -372,7 +375,7 @@ export class FeatureManager {
             if (signal?.aborted || runtime.controller.signal.aborted) throw new Error("子代理任务已取消");
             const last = [...childSession.messages].reverse().find((message) => message.role === "assistant");
             if (last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted")) {
-              throw new Error(last.errorMessage || "股票子代理未完成本轮分析，请重试。");
+              throw new Error(last.errorMessage || "子代理未完成本轮任务，请重试。");
             }
             const text = textFromAssistantMessages(childSession.messages);
             const subagent = progress.finish();
@@ -428,7 +431,7 @@ export class FeatureManager {
       cwd: this.cwd,
       agentDir: this.agentDir,
       settingsManager: this.settingsManager,
-      additionalSkillPaths: STOCK_SKILLS.map((name) => join(this.projectSkillsDir, name)),
+      additionalSkillPaths: [...new Set(SUBAGENT_POLICIES.flatMap(policy => policy.skills))].map((name) => join(this.projectSkillsDir, name)),
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,

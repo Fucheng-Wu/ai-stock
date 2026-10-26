@@ -105,10 +105,10 @@ The following integration-specific changes are intentionally maintained on top o
 - project-local `.env` configuration and start scripts;
 - the RuoYi Vue 2 interface replaces upstream's standalone Vite frontend.
 - default DeepSeek model selection and per-prompt stock authentication;
-- one restricted primary role (`general`) and one stock-only subagent (`stock-analyst`),
+- one restricted primary role (`general`) and separate stock (`stock-analyst`) and public research (`web-researcher`) subagents,
   replacing upstream's coding-oriented Build/Plan and general-purpose child roles;
 - exact tool allowlists in `agent-policy.ts` and execution guards in `permissions.ts`;
-- stock business tools, Tavily public search, and server-injected stock skills;
+- role-isolated stock business tools and Tavily public search, with server-injected skills for each child;
 - no ambient extensions, MCP, global skills, project context files, or prompt templates in model sessions.
 
 The upstream untracked `backend/primary-agents/reviewer/` example is not part of this integration.

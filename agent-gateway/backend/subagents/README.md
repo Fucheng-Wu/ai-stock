@@ -1,22 +1,27 @@
-# 股票子代理
+# 工作台子代理
 
-当前工作台只开放 `stock-analyst`，配置位于 `stock-analyst/agent.md`。
-该目录同时维护 `tools.ts`（四个股票业务工具和本轮身份透传）与
-`web-search.ts`（联网搜索工具）。网关创建股票子代理时显式导入并注册这些实现。
-主 Agent 固定为普通 Agent（`general`），只能通过 `Agent` 工具委派给该角色。
+当前工作台开放两个独立子代理：
+
+- `stock-analyst/agent.md`：股票分析，`tools.ts` 提供四个股票业务工具和本轮身份透传；
+- `web-researcher/agent.md`：信息检索，`web-search.ts` 提供各领域的公开联网搜索。
+
+网关按角色显式注册对应工具。主 Agent 固定为普通 Agent（`general`），通过 `Agent` 工具委派给这两个角色。
 不再加载上游的通用执行、代码探索、方案规划或全局自定义子代理。
 
-股票子代理只回答股票、ETF、证券知识和财经资讯问题，工具固定为：
+工具按角色隔离：
 
-- `stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`：股票业务接口；
-- `web_search`：Tavily 公开联网搜索，需要服务端 `TAVILY_API_KEY`。
+- 股票分析：`stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，复用股票业务接口；
+- 信息检索：仅 `web_search`，Tavily 公开联网搜索，需要服务端 `TAVILY_API_KEY`。
+
+信息检索不限于股票领域。混合任务由主 Agent 先检索，再将问题和带来源、日期的结果交给股票子代理。
+股票子代理需要补充证据时向主 Agent 提出检索需求，两个子代理不能相互或递归委派。
 
 `agent.md` 的正文用于职责与回答约定，frontmatter 展示名称、描述和能力配置。
 实际工具、技能和扩展范围由 `src/lib/agent-policy.ts` 固定，角色文件不能扩大范围。
 不会加载角色自定义扩展、全局扩展、MCP 或其他代理，也不支持新建其他角色。
 模板目录只保留作上游参考，不参与运行时加载。
 
-`stock-520` 与 `stock-research` 的正文由网关读取指定的项目技能文件后直接注入。
+`stock-520` 仅注入股票子代理，`web-research` 仅注入信息检索子代理；网关直接读取指定的项目技能文件。
 不向模型提供 `read`、`grep`、`find`、`ls`、`write`、`edit`、`bash` 或执行代码等内部工具。
 主代理不直接获得股票工具、联网工具或股票技能。
 

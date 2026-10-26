@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createWebSearchExtension } from "../subagents/stock-analyst/web-search.js";
+import { createWebSearchExtension } from "../subagents/web-researcher/web-search.js";
 
 async function searchTool() {
   let tool: any;

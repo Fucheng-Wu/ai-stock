@@ -6,7 +6,7 @@
       <button class="agent-icon-button" type="button" aria-label="关闭子代理聊天" @click="$emit('close')"><i class="el-icon-close" /></button>
     </header>
     <nav v-if="agents.length > 1" class="agent-subagent-panel__tabs" aria-label="切换子代理">
-      <button v-for="agent in agents" :key="agent.id" type="button" :aria-pressed="agent.id === tool.id" @click="$emit('select', agent.id)">{{ agent.subagent ? agent.subagent.name : (agent.input || {}).profile || '股票子代理' }} · {{ agent.status === 'running' ? '执行中' : agent.status === 'error' ? '失败' : '已完成' }}</button>
+      <button v-for="agent in agents" :key="agent.id" type="button" :aria-pressed="agent.id === tool.id" @click="$emit('select', agent.id)">{{ agent.subagent ? agent.subagent.name : (agent.input || {}).profile || '子代理' }} · {{ agent.status === 'running' ? '执行中' : agent.status === 'error' ? '失败' : '已完成' }}</button>
     </nav>
     <div ref="messageScroller" class="agent-subagent-panel__scroll" tabindex="0" @scroll="handleConversationScroll" @wheel.passive="handleScrollWheel" @touchstart.passive="handleScrollTouchStart" @touchmove.passive="handleScrollTouchMove" @keydown="handleScrollKey">
       <div ref="messageContent" class="agent-subagent-panel__content">
@@ -46,7 +46,7 @@ export default {
   props: { tool: { type: Object, required: true }, agents: { type: Array, default: () => [] }, now: Number },
   computed: {
     run() { return this.tool.subagent },
-    title() { return (this.run && this.run.name) || (this.tool.input || {}).profile || '股票子代理' },
+    title() { return (this.run && this.run.name) || (this.tool.input || {}).profile || '子代理' },
     status() { return this.tool.status !== 'running' ? this.tool.status : (this.run && this.run.status) || this.tool.status },
     messages() { return (this.run && this.run.messages) || [] },
     lastAssistant() { return this.messages.slice().reverse().find(message => message.role === 'assistant') }
