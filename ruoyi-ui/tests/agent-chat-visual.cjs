@@ -61,7 +61,21 @@ async function main() {
           const command = JSON.parse(raw)
           const requestId = command.requestId
           if (command.type === 'ping') this.deliver({ type: 'pong' })
-          if (command.type === 'init') this.deliver({ type: 'init', protocolVersion: 1, userId: '42', sessions, settings: {}, models: [], providers: [], requestId })
+          if (command.type === 'init') this.deliver({ type: 'init', protocolVersion: 1, userId: '42', sessions, settings: {}, models: [
+            { provider: 'deepseek', id: 'deepseek-flash', name: 'DeepSeek', supportsImages: false },
+            { provider: 'preview', id: 'vision', name: '视觉模型', supportsImages: true, reasoning: true }
+          ], providers: [], requestId })
+          if (command.type === 'set_model') {
+            this.deliver({ type: 'session_updated', sessionId: command.sessionId, model: { provider: command.provider, id: command.modelId } })
+            this.deliver({ type: 'ack', command: command.type, requestId })
+          }
+          if (command.type === 'prompt') {
+            window.previewLastPrompt = command
+            this.deliver({ type: 'prompt_accepted', sessionId: command.sessionId, requestId })
+            this.deliver({ type: 'message_end', sessionId: command.sessionId, message: { id: 'image-user', role: 'user', text: command.text + '\n[Image 1: 16x16]', images: command.images } })
+            this.deliver({ type: 'message_end', sessionId: command.sessionId, message: { id: 'image-answer', role: 'assistant', text: '图片已送达预览模型' } })
+            this.deliver({ type: 'agent_end', sessionId: command.sessionId })
+          }
           if (command.type === 'list_sessions') this.deliver({ type: 'sessions', sessions: sessions.filter(session => session.title.includes(command.query || '')), requestId })
           if (command.type === 'load_session') this.deliver({ type: 'session_state', requestId, session: {
             summary: sessions.find(session => session.id === command.sessionId), isStreaming: false, epoch: 'preview', sequence: 0,
@@ -143,8 +157,39 @@ async function main() {
     await page.locator('.agent-conversation').evaluate(element => { element.scrollTop = 0 })
     await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-conversation-mobile.png') })
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile conversation has horizontal overflow')
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGO0afrAQApgIkk1w6gG4gATkergYFQDMYDkUAIAVSsBzrxEmLQAAAAASUVORK5CYII=', 'base64')
+    await page.locator('input[type=file]').setInputFiles({ name: 'chart.png', mimeType: 'image/png', buffer: png })
+    await page.locator('.agent-composer-image .el-image__inner').waitFor()
+    assert.equal(await page.getByRole('button', { name: '发送消息', exact: true }).isDisabled(), true)
+    await page.getByLabel('选择模型', { exact: true }).selectOption(JSON.stringify(['preview', 'vision']))
+    await page.waitForFunction(() => !document.querySelector('.agent-composer__send').disabled)
+    await page.locator('.agent-composer-image .el-image').click()
+    await page.locator('.el-image-viewer__wrapper').waitFor()
+    await page.locator('.el-image-viewer__close').click()
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-images-mobile.png') })
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile image composer has horizontal overflow')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await page.getByText('图片已送达预览模型', { exact: true }).waitFor()
+    assert.equal(await page.locator('.agent-message-images').count(), 1, 'image optimistic bubble is reconciled')
+    assert.equal(await page.evaluate(() => window.previewLastPrompt.images.length), 1)
+    assert.equal(await page.locator('.agent-composer-image').count(), 0)
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    const attachImage = async kind => page.evaluate(({ data, kind }) => {
+      const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0))
+      const transfer = new DataTransfer()
+      transfer.items.add(new File([bytes], 'clipboard.png', { type: 'image/png' }))
+      const event = kind === 'paste' ? new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }) : new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true })
+      document.querySelector('.agent-composer').dispatchEvent(event)
+    }, { data: png.toString('base64'), kind })
+    await attachImage('paste')
+    await page.waitForFunction(() => document.querySelectorAll('.agent-composer-image').length === 1)
+    await attachImage('drop')
+    await page.waitForFunction(() => document.querySelectorAll('.agent-composer-image').length === 2)
+    await page.locator('.agent-chat-page').screenshot({ path: path.join(output, 'agent-chat-images-desktop.png') })
+    await page.getByRole('button', { name: '移除图片 1', exact: true }).click()
+    assert.equal(await page.locator('.agent-composer-image').count(), 1)
     assert.deepEqual(errors, [], 'browser runtime errors')
-    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer', 'subagent split view', 'live child updates', 'scroll following', 'theme persistence', 'dark theme', 'mobile subagent'], browserErrors: errors }))
+    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer', 'subagent split view', 'live child updates', 'scroll following', 'theme persistence', 'dark theme', 'mobile subagent', 'image upload and preview', 'model vision gate', 'image-only send', 'image reconciliation', 'image paste and drop', 'mobile image composer'], browserErrors: errors }))
   } finally {
     if (browser) await browser.close()
     server.closeAllConnections()

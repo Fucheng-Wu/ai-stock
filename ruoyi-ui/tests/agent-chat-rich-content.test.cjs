@@ -47,6 +47,7 @@ function loadSource(relativePath, mocks = {}) {
 const { buildAgentContent, highlightAgentCode } = loadSource('src/utils/agent-markdown.js')
 const { parseAgentChart } = loadSource('src/utils/agent-echarts.js')
 const { groupSessions, draftKey, MAX_CACHED_SESSIONS, MAX_VISIBLE_MESSAGES } = loadSource('src/utils/agent-chat-state.js')
+const { readImage, MAX_IMAGE_BYTES } = loadSource('src/utils/agent-images.js')
 const MarkdownComponent = loadSource('src/views/agent/chat/components/AgentMarkdown.vue', { './AgentCodeBlock.vue': {}, './AgentEchart.vue': {} }).default
 const ToolCardComponent = loadSource('src/views/agent/chat/components/AgentToolCard.vue').default
 const ChatScroll = loadSource('src/utils/agent-chat-scroll.js').default
@@ -193,6 +194,137 @@ function createChatState() {
   const emit = event => instance.applyAgentEvent({ sessionId: 'session', ...event })
   return { instance, state, emit }
 }
+
+test('image-only send, rejection, retry and resized image confirmation preserve one user bubble', () => {
+  const { instance, state } = createChatState()
+  instance.connectionState = 'connected'
+  state.model = { provider: 'test', id: 'vision' }
+  instance.models = [{ ...state.model, supportsImages: true }]
+  const image = { data: 'aGVsbG8=', mimeType: 'image/png' }
+  instance.inputImages = [image]
+  const sent = []
+  instance.sendSocket = message => { sent.push(message); instance.trackRequest(message); return true }
+  assert.equal(instance.canSubmit, true)
+  instance.submitPrompt()
+  assert.equal(sent[0].text, '')
+  assert.deepEqual(sent[0].images, [image])
+  assert.deepEqual(instance.inputImages, [])
+  instance.handleServerMessage({ type: 'error', requestId: sent[0].requestId, code: 'REQUEST_FAILED', message: '服务忙' })
+  assert.deepEqual(state.lastImages, [image])
+  instance.retryFailedPrompt()
+  assert.deepEqual(sent[1].images, [image])
+  instance.finishMessage(state, { id: 'sdk-user', role: 'user', text: '[Image 1: 10x10]', images: [image] })
+  assert.equal(state.messages.filter(message => message.images.length).length, 1)
+  instance.clearPendingRequests()
+})
+
+test('non-vision models block image sends and model changes wait for acknowledgement', () => {
+  const { instance, state } = createChatState()
+  instance.connectionState = 'connected'
+  state.model = { provider: 'test', id: 'text' }
+  instance.models = [{ ...state.model, supportsImages: false }, { provider: 'test', id: 'vision', supportsImages: true }]
+  instance.inputImages = [{ data: 'aGVsbG8=', mimeType: 'image/png' }]
+  const sent = []
+  instance.sendSocket = message => { sent.push(message); instance.trackRequest(message); return true }
+  assert.equal(instance.canSubmit, false)
+  assert.match(instance.imageModelError, /不支持图片/)
+  instance.setComposerModel(JSON.stringify(['test', 'vision']))
+  assert.equal(state.settingsPending, true)
+  assert.equal(instance.canSubmit, false)
+  instance.handleServerMessage({ type: 'session_updated', sessionId: 'session', model: { provider: 'test', id: 'vision' } })
+  instance.handleServerMessage({ type: 'ack', command: 'set_model', requestId: sent[0].requestId })
+  assert.equal(instance.canSubmit, true)
+  instance.clearPendingRequests()
+})
+
+test('new image conversations preserve attachments on creation failure and unsupported defaults', () => {
+  const { instance } = createChatState()
+  instance.activeSessionId = null
+  instance.connectionState = 'connected'
+  const image = { data: 'aGVsbG8=', mimeType: 'image/png' }
+  instance.inputImages = [image]
+  const sent = []
+  instance.sendSocket = message => { sent.push(message); instance.trackRequest(message); return true }
+  instance.submitPrompt()
+  assert.deepEqual(instance.pendingImages, [image])
+  instance.handleServerMessage({ type: 'error', requestId: sent[0].requestId, code: 'REQUEST_FAILED', message: '服务忙' })
+  assert.deepEqual(instance.inputImages, [image])
+  instance.submitPrompt()
+  instance.handleServerMessage({ type: 'session_created', requestId: sent[1].requestId, session: { summary: { id: 'new' }, messages: [], model: { provider: 'test', id: 'text-only' }, isStreaming: false } })
+  assert.deepEqual(instance.inputImages, [image])
+  assert.deepEqual(instance.pendingImages, [])
+  assert.match(instance.imageError, /不支持图片/)
+  assert.equal(sent.some(message => message.type === 'prompt'), false)
+  instance.clearPendingRequests()
+})
+
+test('choosing a vision model in a new conversation moves the draft and waits for the model change', () => {
+  const { instance } = createChatState()
+  instance.activeSessionId = null
+  instance.connectionState = 'connected'
+  instance.inputText = '分析这张图'
+  instance.inputImages = [{ data: 'aGVsbG8=', mimeType: 'image/png' }]
+  instance.models = [{ provider: 'test', id: 'vision', supportsImages: true }]
+  const sent = []
+  instance.sendSocket = message => { sent.push(message); instance.trackRequest(message); return true }
+  instance.setComposerModel(JSON.stringify(['test', 'vision']))
+  instance.handleServerMessage({ type: 'session_created', requestId: sent[0].requestId, session: { summary: { id: 'new' }, messages: [], model: { provider: 'test', id: 'text-only' }, isStreaming: false } })
+  assert.equal(instance.inputText, '分析这张图')
+  assert.equal(instance.inputImages.length, 1)
+  assert.equal(sent[1].type, 'set_model')
+  assert.equal(instance.canSubmit, false)
+  instance.handleServerMessage({ type: 'session_updated', sessionId: 'new', model: { provider: 'test', id: 'vision' } })
+  instance.handleServerMessage({ type: 'ack', requestId: sent[1].requestId, command: 'set_model' })
+  assert.equal(instance.canSubmit, true)
+  instance.clearPendingRequests()
+})
+
+test('image decoding, upload limits and switching sessions during reads cannot corrupt drafts', async () => {
+  await assert.rejects(readImage({ type: 'image/svg+xml', size: 10 }), /PNG/)
+  await assert.rejects(readImage({ type: 'image/png', size: MAX_IMAGE_BYTES + 1 }), /5 MB/)
+  const descriptors = ['FileReader', 'Image'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)])
+  let complete
+  let decodeFails = false
+  class Reader {
+    result = 'data:image/png;base64,aGVsbG8='
+    readAsDataURL() { complete = () => this.onload() }
+  }
+  class Preview {
+    set src(value) { queueMicrotask(() => decodeFails ? this.onerror() : this.onload()) }
+  }
+  Object.defineProperty(globalThis, 'FileReader', { configurable: true, value: Reader })
+  Object.defineProperty(globalThis, 'Image', { configurable: true, value: Preview })
+  try {
+    const { instance } = createChatState()
+    const file = { name: 'chart.png', type: 'image/png', size: 5 }
+    const pending = instance.addImages([file])
+    assert.equal(instance.readingImages, true)
+    instance.switchDraft('other-session')
+    complete()
+    await pending
+    assert.deepEqual(instance.inputImages, [])
+    const valid = instance.addImages([file])
+    complete()
+    await valid
+    assert.equal(instance.inputImages[0].name, 'chart.png')
+    await instance.addImages([file, file, file, file])
+    assert.match(instance.imageError, /最多/)
+    assert.equal(instance.inputImages.length, 1)
+    decodeFails = true
+    const invalid = instance.addImages([file])
+    complete()
+    await invalid
+    assert.match(instance.imageError, /损坏/)
+    instance.resetIdentityConnection()
+    assert.deepEqual(instance.inputImages, [])
+    assert.deepEqual(instance.imageDrafts, {})
+  } finally {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor)
+      else delete globalThis[key]
+    }
+  }
+})
 
 test('child progress survives parent replacement, late completion and a restored snapshot', () => {
   const { instance, state, emit } = createChatState()

@@ -13,7 +13,8 @@
         <div v-if="!messages.some(message => message.role === 'user')" class="agent-user-bubble">{{ (run && run.task) || (tool.input || {}).task || '正在启动子代理…' }}</div>
         <article v-for="message in messages" :key="message.id" class="agent-subagent-message" :class="'is-' + message.role">
           <div class="agent-message__author">{{ message.role === 'user' ? '委派任务' : title }}</div>
-          <div v-if="message.role === 'user'" class="agent-user-bubble">{{ message.text }}</div>
+          <div v-if="message.images && message.images.length" class="agent-subagent-images"><el-image v-for="(image, index) in message.images" :key="index" :src="imageSource(image)" :preview-src-list="message.images.map(imageSource)" fit="contain" :alt="image.name || '委派的图片'" @load="scrollToBottom()" /></div>
+          <div v-if="message.role === 'user' && message.text" class="agent-user-bubble">{{ message.text }}</div>
           <template v-else>
             <agent-thinking-panel v-if="message.thinking" :text="message.thinking" :streaming="isStreaming(message) && !message.text" @layout="scrollToBottom()" />
             <agent-tool-card v-for="childTool in (message.tools || [])" :key="childTool.id" :tool="childTool" :now="now" @layout="scrollToBottom()" />
@@ -32,6 +33,7 @@
 </template>
 
 <script>
+import { imageSource } from '@/utils/agent-images'
 import chatScroll from '@/utils/agent-chat-scroll'
 import AgentMarkdown from './AgentMarkdown.vue'
 import AgentThinkingPanel from './AgentThinkingPanel.vue'
@@ -53,7 +55,7 @@ export default {
     'tool.id': { immediate: true, handler() { this.$nextTick(() => this.scrollToBottom(true)) } },
     'tool.subagent'() { this.$nextTick(() => this.scrollToBottom()) }
   },
-  methods: { isStreaming(message) { return this.status === 'running' && this.lastAssistant && message.id === this.lastAssistant.id } }
+  methods: { imageSource, isStreaming(message) { return this.status === 'running' && this.lastAssistant && message.id === this.lastAssistant.id } }
 }
 </script>
 
@@ -64,6 +66,7 @@ export default {
 .agent-subagent-panel__tabs { display: flex; gap: 7px; padding: 10px 16px; overflow-x: auto; border-bottom: 1px solid var(--agent-line); button { flex-shrink: 0; padding: 7px 10px; border: 1px solid var(--agent-line); border-radius: 7px; background: transparent; color: var(--agent-muted); font-size: 11px; cursor: pointer; &[aria-pressed='true'] { color: var(--agent-accent); border-color: var(--agent-accent); } } }
 .agent-subagent-panel__scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; }
 .agent-subagent-panel__content { padding: 22px; }
+.agent-subagent-images { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; .el-image { width: 200px; max-width: 100%; max-height: 240px; border-radius: 10px; } }
 .agent-subagent-message { padding: 12px 0; }
 .agent-message__author { margin-bottom: 12px; color: var(--agent-muted); font-size: 12px; }
 .agent-user-bubble { padding: 12px 16px; border: 1px solid var(--agent-line); border-radius: 12px; background: var(--agent-surface, #eff6ff); color: var(--agent-text, #374151); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; }

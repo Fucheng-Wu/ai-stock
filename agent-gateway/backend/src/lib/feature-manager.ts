@@ -14,6 +14,7 @@ import {
   type ResourceLoader,
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { isImageAttachment } from "../../../shared/images.js";
 import { trackSubagent } from "./subagent-progress.js";
 import { Type } from "typebox";
 import { createPermissionExtension, parsePermissions, type PermissionBroker, type RoleRuntime } from "./permissions.js";
@@ -363,7 +364,11 @@ export class FeatureManager {
             signal?.addEventListener("abort", abort, { once: true });
             runtime.controller.signal.addEventListener("abort", abort, { once: true });
             if (signal?.aborted || runtime.controller.signal.aborted) throw new Error("子代理任务已取消");
-            await childSession.prompt(params.task, { expandPromptTemplates: false });
+            const latestUser = [...ctx.sessionManager.getBranch()].reverse().find(entry => entry.type === "message" && entry.message.role === "user");
+            const content = latestUser?.type === "message" && latestUser.message.role === "user" ? latestUser.message.content : undefined;
+            const images = Array.isArray(content) ? content.flatMap(block => block.type === "image" && isImageAttachment(block)
+              ? [{ type: "image" as const, data: block.data, mimeType: block.mimeType }] : []) : [];
+            await childSession.prompt(params.task, { expandPromptTemplates: false, images });
             if (signal?.aborted || runtime.controller.signal.aborted) throw new Error("子代理任务已取消");
             const last = [...childSession.messages].reverse().find((message) => message.role === "assistant");
             if (last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted")) {

@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { convertActiveMessages, convertMessages } from "../src/lib/message-converter.js";
+import { convertActiveMessages, convertMessages, titleFromMessages } from "../src/lib/message-converter.js";
+
+test("images survive transcript conversion and image-only sessions receive a title", () => {
+  const image = { type: "image", data: "aGVsbG8=", mimeType: "image/webp" };
+  const raw = [{ role: "user", content: [image, { type: "image", data: "bad!", mimeType: "image/svg+xml" }] }];
+  const messages = convertMessages(raw);
+  assert.deepEqual(messages[0].images, [{ data: image.data, mimeType: image.mimeType }]);
+  assert.equal(messages[0].text, "");
+  assert.equal(titleFromMessages(messages), "图片问答");
+  assert.deepEqual(convertMessages(JSON.parse(JSON.stringify(raw))), messages);
+});
 
 test("combines tool calls and the final answer into one assistant turn", () => {
   const messages = convertMessages([

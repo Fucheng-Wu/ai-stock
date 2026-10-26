@@ -83,6 +83,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
   const saved = Object.fromEntries(["PI_AGENT_DIR", "AGENT_DEFAULT_MODEL", "DEEPSEEK_API_KEY", "STOCK_API_BASE_URL"].map((key) => [key, process.env[key]]));
   const requests: Array<Record<string, any>> = [];
   const token = "test-user-token-should-never-reach-model";
+  const image = { type: "image" as const, mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGO0afrAQApgIkk1w6gG4gATkergYFQDMYDkUAIAVSsBzrxEmLQAAAAASUVORK5CYII=" };
   let stockRequests = 0;
   const stockServer = createServer((request, response) => {
     stockRequests++;
@@ -130,7 +131,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     const stockPort = await listen(stockServer);
     await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { deepseek: {
       baseUrl: `http://127.0.0.1:${modelPort}/v1`, api: "openai-completions", apiKey: "test-only",
-      models: [{ id: "gateway-test", name: "Local test", reasoning: false, contextWindow: 32000, maxTokens: 1024 }],
+      models: [{ id: "gateway-test", name: "Local test", input: ["text", "image"], reasoning: false, contextWindow: 32000, maxTokens: 1024 }],
     } } }));
     process.env.PI_AGENT_DIR = agentDir;
     process.env.AGENT_DEFAULT_MODEL = "gateway-test";
@@ -176,7 +177,9 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
         if (!convertActiveMessages(active).at(-1)?.text.endsWith(event.delta)) missingPartialSnapshot = true;
       }
     });
-    await runWithStockToolToken(token, () => active.session.prompt("查询600519行情", { expandPromptTemplates: false }));
+    await runWithStockToolToken(token, () => active.session.prompt("查询600519行情", { expandPromptTemplates: false, images: [image] }));
+    assert.ok(active.session.model?.input.includes("image"));
+    assert.ok(convertActiveMessages(active)[0].images?.length, convertActiveMessages(active)[0].text);
     assert.ok(partialSnapshots > 0);
     assert.ok(childUpdates > 0);
     assert.equal(missingChildSnapshot, false, "reconnect snapshot lost child progress");
@@ -184,6 +187,11 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     assert.equal(missingPartialSnapshot, false, "live snapshot omitted the latest streamed text");
     assert.equal(stockRequests, 1);
     assert.equal(requests.length, 4);
+    // Both primary and child must receive actual image content, not just a model's description.
+    for (const body of requests) {
+      assert.ok(body.messages.some((message: any) => message.role === "user" && Array.isArray(message.content)
+        && message.content.some((block: any) => block.type === "image_url" && block.image_url.url.startsWith("data:image/png;base64,"))), JSON.stringify({ tools: body.tools.map((tool: any) => tool.function.name), messages: body.messages.map((message: any) => ({ role: message.role, content: typeof message.content === "string" ? "text" : message.content?.map((block: any) => ({ type: block.type, url: block.image_url?.url?.slice(0, 40) })) })) }));
+    }
     for (const body of requests) {
       const names: string[] = body.tools.map((tool: any) => tool.function.name);
       assert.deepEqual([...names].sort(), names.includes("Agent") ? ["Agent"] : [...STOCK_TOOLS].sort());
@@ -199,6 +207,8 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     assert.equal((await resources.features.getSubagentSettings()).active, 0);
     const child = convertActiveMessages(active).flatMap(message => message.tools ?? []).find(tool => tool.name === "Agent")?.subagent;
     assert.equal(child?.status, "done");
+    assert.ok(child?.messages.some(message => message.role === "user" && message.images?.length === 1));
+    assert.equal(convertActiveMessages(active)[0].images?.length, 1);
     assert.ok(child?.messages.some(message => message.text.includes("最新价100")));
     assert.ok(child?.messages.some(message => message.tools?.some(tool => tool.name === "stock_quote" && tool.status === "done")));
     // A missing local file must not prevent a complete backup and JSONL recovery.
@@ -214,6 +224,9 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     // The SDK creates failed tool results itself; our tool_result hook must attach child details.
     childFails = true;
     await runWithStockToolToken(token, () => active.session.prompt("再查询一次行情", { expandPromptTemplates: false }));
+    const secondChildRequest = requests.slice(4).find(body => !body.tools.some((tool: any) => tool.function.name === "Agent"));
+    assert.ok(secondChildRequest);
+    assert.ok(!JSON.stringify(secondChildRequest.messages).includes("data:image/"), "previous turn images must not leak into an unrelated child task");
     const failedTool = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1);
     assert.equal(failedTool?.status, "error");
     assert.equal(failedTool?.subagent?.status, "error");

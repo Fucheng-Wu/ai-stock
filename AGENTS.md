@@ -94,7 +94,8 @@ deepseek:
 
 - 页面：`ruoyi-ui/src/views/agent/chat/index.vue`，提供多会话、流式回复、停止生成、思考过程和工具调用展示。同一轮直到 `agent_end` 才结束流式气泡，不能在中间 `message_end` 清空流式消息 ID；工具结果按调用 ID 回写。
 - 富文本：`ruoyi-ui/src/views/agent/chat/components/AgentMarkdown.vue` 使用 `markdown-it`，代码高亮/复制由 `AgentCodeBlock.vue` 提供，顶层 `echarts` JSON 围栏由 `AgentEchart.vue` 渲染为可预览、查看配置和下载的图表；输出约定在 `agent-gateway/backend/src/lib/response-format.ts`。
-- 页面样式集中在同目录的 `chat.scss`，工具卡片为 `AgentToolCard.vue`；Markdown流式渲染每60毫秒合并，长工具输出默认预览末尾12,000字。已选择性同步上游 `0217a7f`，记录见 `agent-gateway/UPSTREAM.md`；事件按 `epoch/sequence` 去重和重新同步，保持现有用户隔离和角色限制。
+- 页面样式集中在同目录的 `chat.scss`，工具卡片为 `AgentToolCard.vue`；Markdown流式渲染每60毫秒合并，长工具输出默认预览末尾12,000字。已选择性同步上游 `f3afb9c`，记录见 `agent-gateway/UPSTREAM.md`；事件按 `epoch/sequence` 去重和重新同步，保持现有用户隔离和角色限制。
+- 图像问答：支持上传、粘贴、拖拽 PNG/JPEG/GIF/WebP，最多4张、每张5 MiB，可仅发送图片；输入框下方提供模型、思考强度和上下文工具栏。需选择标有“图像”的模型，前后端均校验能力。图片随 MySQL/JSONL 历史保存，本轮图片自动传给股票子代理并在子代理面板展示；未发送图片草稿仅在页面内存按用户/会话隔离，刷新需重新选择。
 - 子代理实时过程：`AgentSubagentPanel.vue` 展示股票子代理的思考、工具和回复，桌面分屏、手机覆盖显示；`AgentToolGroup.vue` 折叠工具组。进度每80毫秒合并，通过现有工具进度快照恢复，最终过程随 Agent 工具结果保存在 MySQL/JSONL；旧调用可查看原始结果。
 - 主题：Agent 页右上角支持深浅主题切换，偏好以 `orange-agent-theme` 保存在 localStorage；`theme.scss` 只作用于聊天页和其权限弹窗，Markdown、代码、工具、子代理与图表同步切换。`agent-chat-scroll.js` 在用户上滚后暂停跟随，点击回到最新后恢复，内容增长不重置阅读位置。
 - 后端：`agent-gateway/backend`，基于 Hono、WebSocket 和 `@earendil-works/pi-coding-agent`，源码与项目一同维护和启动。

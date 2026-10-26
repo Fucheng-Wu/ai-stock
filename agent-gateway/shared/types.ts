@@ -68,10 +68,18 @@ export interface ToolCall {
   durationMs?: number;
 }
 
+/** Raw base64 image bytes without a data URL prefix. */
+export interface ImageAttachment {
+  data: string;
+  mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  name?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   text: string;
+  images?: ImageAttachment[];
   thinking?: string;
   tools?: ToolCall[];
   timestamp?: string;
@@ -90,6 +98,7 @@ export interface ModelInfo {
   name: string;
   contextWindow?: number;
   reasoning?: boolean;
+  supportsImages?: boolean;
 }
 
 export interface ProviderInfo {
@@ -225,7 +234,7 @@ export type ClientMessage = CommandBase & (
   | { type: "rename_session"; sessionId: string; title: string }
   | { type: "delete_session"; sessionId: string }
   // Legacy field is ignored: stock tools use the authenticated connection's token.
-  | { type: "prompt"; sessionId: string; text: string; stockAccessToken?: string }
+  | { type: "prompt"; sessionId: string; text: string; images?: ImageAttachment[]; stockAccessToken?: string }
   | { type: "abort"; sessionId: string }
   | { type: "set_model"; sessionId: string; provider: string; modelId: string }
   | { type: "set_thinking_level"; sessionId: string; level: ThinkingLevel }

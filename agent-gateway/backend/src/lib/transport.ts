@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
+import { MAX_MESSAGE_BYTES } from "../../../shared/images.js";
 
-export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+export const MAX_BUFFERED_BYTES = 2 * MAX_MESSAGE_BYTES;
 
 /** A slow client recovers from a snapshot instead of accumulating an unbounded queue. */
 export function sendEncoded(ws: Pick<WebSocket, "readyState" | "bufferedAmount" | "send" | "close">, encoded: string): boolean {

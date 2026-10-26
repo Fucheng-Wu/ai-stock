@@ -5,9 +5,41 @@ The embedded backend is synchronized with:
 - Source: `C:\Users\orange\Desktop\study\pi\pi-agent-gateway`
 - Branch: `main`
 - Original baseline: `94d9d752f2ada9145454e967c1721cfe68bf685e`
-- Latest selectively adapted commit: `0217a7f4aa0d076870e674bdd1d73547853a6c48`
-- Commit subject: `feat: add live subagent split view and improve chat streaming UX`
-- Commit date: `2026-10-25 20:26:18 +0800`
+- Latest selectively adapted commit: `f3afb9caa2b5d7cbdcdc642cc461dd23edef1fbe`
+- Commit subject: `feat: add image questions and simplify chat composer`
+- Commit date: `2026-10-25 22:41:24 +0800`
+
+## Changes adapted from f3afb9c
+
+- Image questions through the existing authenticated WebSocket protocol: optional raw-base64
+  attachments, PNG/JPEG/GIF/WebP, up to four images at 5 MiB each, and image-only prompts.
+  Runtime validation rejects unsupported MIME types, malformed base64 and oversized input.
+  The incoming message limit is 32 MiB and the outgoing backpressure threshold is 64 MiB.
+- Model discovery exposes `supportsImages`; both the Vue composer and backend reject image
+  prompts for text-only models. The composer offers configured models and thinking levels,
+  while the primary role remains fixed to the restricted ordinary Agent.
+- Vue 2 upload, paste and drop handling, attachment thumbnails, removal, full-size previews,
+  image history, rejection/retry recovery and account/session-scoped in-memory image drafts.
+  Text drafts continue using sessionStorage; unsent images do not survive page refresh.
+  Images and text being entered during initial session creation are retained.
+- A taller composer with its send/stop control inside the lower right corner and the
+  attachment/model/thinking/context toolbar underneath, adapted for mobile and both themes.
+- Workbench adaptation: the stock child receives the current user turn's images directly from
+  its owning session branch. Raw image bytes are not model-generated Agent arguments, and
+  images from an earlier user turn are not forwarded automatically to an unrelated child task.
+  Child images are visible in its panel and survive existing MySQL/JSONL record recovery.
+- The upstream coding roles, workspace/file operations and standalone frontend are excluded.
+  Existing stock identity forwarding, user isolation and exact tool allowlists remain enforced.
+
+Upstream committed these changes while synchronization was in progress; the final source revision
+is the commit above. `backend/subagents` has no additional stock role to copy in this revision.
+No dependency or database schema changes are required.
+
+Validation: backend typecheck and 20 tests, including real SDK image payloads for both primary
+and child, record recovery, rejected image payloads and tool-policy regressions; 42 frontend state
+and image-reading tests; production build; desktop/mobile browser checks for uploads, previews,
+image-only send, optimistic reconciliation, model capability checks, paste/drop and layout.
+The SDK test uses a local model stub; no paid external vision model was invoked.
 
 ## Changes adapted from 0217a7f
 

@@ -157,7 +157,10 @@
 
               <agent-tool-group v-if="message.tools && message.tools.length" :tools="message.tools" :now="clockNow" @subagent="selectedSubagentId = $event" @layout="handleRichContentLayout" />
 
-              <div v-if="message.role === 'user'" class="agent-user-bubble">{{ message.text }}</div>
+              <div v-if="message.images.length" class="agent-message-images">
+                <el-image v-for="(image, imageIndex) in message.images" :key="imageIndex" :src="imageSource(image)" :preview-src-list="message.images.map(imageSource)" :alt="image.name || '上传的图片'" fit="contain" @load="handleRichContentLayout" />
+              </div>
+              <div v-if="message.role === 'user' && message.text" class="agent-user-bubble">{{ message.text }}</div>
               <agent-markdown
                 v-else-if="message.text"
                 :text="message.text"
@@ -189,13 +192,22 @@
         <button v-if="activeState && activeState.hasNewer" class="agent-history-button" type="button" :disabled="!isConnected" @click="loadSession(activeSessionId)">回到最新消息</button>
         <div v-if="activeState && activeState.isStreaming" class="agent-run-status" role="status" aria-live="polite"><i class="el-icon-loading" /> {{ runPhaseLabel }} <span>{{ runElapsed }}</span></div>
         <div v-if="activeState && activeState.sendError" class="agent-request-error" role="alert">{{ activeState.sendError }} <button type="button" :disabled="!isConnected || activeState.isStreaming" @click="retryFailedPrompt">{{ activeState.delivery === 'unknown' ? '取回问题' : activeState.delivery === 'accepted' ? '重新提问' : '重试发送' }}</button></div>
-        <div class="agent-composer" :class="{ 'is-focused': composerFocused, 'is-disabled': !isConnected }">
+        <input ref="imageInput" type="file" class="agent-image-input" :accept="imageAccept" multiple aria-label="选择图片" :disabled="!canAttach" @change="onImageFiles" />
+        <div v-if="inputImages.length" class="agent-composer-images">
+          <div v-for="(image, imageIndex) in inputImages" :key="imageIndex" class="agent-composer-image">
+            <el-image :src="imageSource(image)" :preview-src-list="inputImages.map(imageSource)" :alt="image.name || '待发送图片'" fit="cover" />
+            <button type="button" :disabled="readingImages" :aria-label="'移除图片 ' + (imageIndex + 1)" @click="inputImages = inputImages.filter((_, index) => index !== imageIndex)"><i class="el-icon-close" /></button>
+          </div>
+        </div>
+        <p v-if="imageError || imageModelError" class="agent-image-error" role="alert">{{ imageError || imageModelError }}</p>
+        <p v-if="readingImages" class="agent-image-status" role="status">正在读取图片…</p>
+        <div class="agent-composer" @paste="onImagePaste" @dragover.prevent @drop.prevent="onImageDrop" :class="{ 'is-focused': composerFocused, 'is-disabled': !isConnected }">
           <el-input
             ref="composer"
             v-model="inputText"
             class="agent-composer__input"
             type="textarea"
-            :autosize="{ minRows: 2, maxRows: 6 }"
+            :autosize="{ minRows: 3, maxRows: 6 }"
             maxlength="12000"
             resize="none"
             :disabled="connectionState === 'auth-expired' || connectionState === 'forbidden'"
@@ -227,10 +239,22 @@
             <i class="el-icon-top" />
           </button>
         </div>
+        <div class="agent-composer-toolbar" role="group" aria-label="对话设置与附件">
+          <button class="agent-icon-button" type="button" :disabled="!canAttach || inputImages.length >= 4" title="上传图片（最多4张，每张5 MB）" aria-label="上传图片" @click="$refs.imageInput.click()"><i class="el-icon-picture-outline" /></button>
+          <span class="agent-composer-role"><i class="el-icon-user" /> 普通 Agent</span>
+          <select :value="modelKey" aria-label="选择模型" :disabled="settingsDisabled" @change="setComposerModel($event.target.value)">
+            <option v-if="!modelKey" value="">选择模型（默认 DeepSeek）</option>
+            <option v-if="modelKey && !currentModelInfo" :value="modelKey">{{ activeModel }}</option>
+            <option v-for="model in models" :key="JSON.stringify([model.provider, model.id])" :value="JSON.stringify([model.provider, model.id])">{{ model.name || model.id }} · {{ model.provider }}{{ model.supportsImages ? ' · 图像' : '' }}{{ model.reasoning ? ' · 推理' : '' }}</option>
+          </select>
+          <select v-if="activeState" :value="activeState.thinkingLevel || 'medium'" aria-label="思考强度" :disabled="settingsDisabled" @change="setComposerThinking($event.target.value)">
+            <option value="off">关闭思考</option><option value="minimal">最少思考</option><option value="low">低强度</option><option value="medium">中等思考</option><option value="high">高强度</option><option value="xhigh">更高强度</option><option value="max">最大强度</option>
+          </select>
+          <span v-if="contextLabel" class="agent-composer-context">{{ contextLabel }}</span>
+        </div>
         <div class="agent-composer__meta">
-          <span><kbd>Enter</kbd> 发送 <span class="agent-composer__separator">·</span> <kbd>Shift + Enter</kbd> 换行</span>
-          <span v-if="contextLabel">{{ contextLabel }}</span>
-          <span v-else>Agent 的回答可能存在偏差，请核对重要信息</span>
+          <span><kbd>Enter</kbd> 发送 <span class="agent-composer__separator">·</span> <kbd>Shift + Enter</kbd> 换行 · 可粘贴或拖入图片</span>
+          <span>Agent 的回答可能存在偏差，请核对重要信息</span>
         </div>
       </footer>
     </main>
@@ -257,6 +281,7 @@ import AgentPermissionDialog from './components/AgentPermissionDialog.vue'
 import AgentToolGroup from './components/AgentToolGroup.vue'
 import AgentSubagentPanel from './components/AgentSubagentPanel.vue'
 import chatScroll from '@/utils/agent-chat-scroll'
+import { IMAGE_MIME_TYPES, MAX_IMAGES, imageSource, readImage } from '@/utils/agent-images'
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -303,6 +328,15 @@ export default {
       loadingSessionIds: {},
       activeSessionId: null,
       inputText: '',
+      inputImages: [],
+      imageDrafts: {},
+      pendingImages: [],
+      readingImages: false,
+      imageReadVersion: 0,
+      imageError: '',
+      imageAccept: IMAGE_MIME_TYPES.join(','),
+      models: [],
+      pendingNewModel: '',
       pendingPrompt: '',
       creatingSession: false,
       composerFocused: false,
@@ -390,8 +424,25 @@ export default {
       }
       return labels[this.connectionState] || '未连接'
     },
+    modelKey() {
+      const model = this.activeState && this.activeState.model
+      return model ? JSON.stringify([model.provider, model.id]) : ''
+    },
+    currentModelInfo() {
+      return this.models.find(model => JSON.stringify([model.provider, model.id]) === this.modelKey)
+    },
+    imageModelError() {
+      return this.inputImages.length && this.activeState && !(this.currentModelInfo && this.currentModelInfo.supportsImages)
+        ? '当前模型不支持图片，请选择标有「图像」的模型' : ''
+    },
+    settingsDisabled() {
+      return !this.isConnected || this.creatingSession || Boolean(this.activeSessionId && this.loadingSessionIds[this.activeSessionId]) || Boolean(this.activeState && (this.activeState.isStreaming || this.activeState.settingsPending))
+    },
+    canAttach() {
+      return !this.creatingSession && !this.readingImages && !['auth-expired', 'forbidden'].includes(this.connectionState) && !(this.activeState && this.activeState.isStreaming)
+    },
     canSubmit() {
-      if (!this.isConnected || this.creatingSession || !this.inputText.trim()) return false
+      if (!this.isConnected || this.creatingSession || (!this.inputText.trim() && !this.inputImages.length) || this.readingImages || this.imageModelError || (this.activeState && this.activeState.settingsPending)) return false
       if (this.activeSessionId && this.loadingSessionIds[this.activeSessionId]) return false
       if (this.activeSessionId && !this.activeState) return false
       return !(this.activeState && this.activeState.isStreaming)
@@ -407,6 +458,7 @@ export default {
   },
   watch: {
     inputText() { this.saveDraft() },
+    inputImages() { this.saveDraft() },
     activeSessionId() { this.selectedSubagentId = ''; this.previousScrollTop = 0; this.userPinnedScroll = false },
     '$store.state.user.token'() {
       this.handleIdentityChange()
@@ -436,6 +488,52 @@ export default {
     }
   },
   methods: {
+    imageSource,
+    async addImages(files) {
+      if (!this.canAttach) return
+      this.imageError = ''
+      const pending = Array.from(files || [])
+      if (!pending.length) return
+      if (this.inputImages.length + pending.length > MAX_IMAGES) { this.imageError = '每条消息最多上传 4 张图片'; return }
+      const version = ++this.imageReadVersion
+      this.readingImages = true
+      try {
+        const images = await Promise.all(pending.map(readImage))
+        if (version === this.imageReadVersion && !this.componentDestroyed) this.inputImages = this.inputImages.concat(images)
+      } catch (error) {
+        if (version === this.imageReadVersion) this.imageError = error.message
+      } finally {
+        if (version === this.imageReadVersion) this.readingImages = false
+      }
+    },
+    onImageFiles(event) {
+      this.addImages(event.target.files)
+      event.target.value = ''
+    },
+    onImagePaste(event) {
+      const files = Array.from((event.clipboardData && event.clipboardData.files) || []).filter(file => file.type.startsWith('image/'))
+      if (files.length) { event.preventDefault(); this.addImages(files) }
+    },
+    onImageDrop(event) { this.addImages(event.dataTransfer && event.dataTransfer.files) },
+    setComposerModel(value) {
+      if (!value || this.settingsDisabled) return
+      this.imageError = ''
+      if (!this.activeState) {
+        this.pendingNewModel = value
+        this.creatingSession = true
+        if (!this.sendSocket({ type: 'create_session', requestId: createId('create') })) { this.creatingSession = false; this.pendingNewModel = '' }
+        return
+      }
+      const [provider, modelId] = JSON.parse(value)
+      const requestId = createId('model')
+      this.$set(this.activeState, 'settingsPending', true)
+      if (!this.sendSocket({ type: 'set_model', sessionId: this.activeSessionId, provider, modelId, requestId })) this.activeState.settingsPending = false
+    },
+    setComposerThinking(level) {
+      if (!this.activeState || this.settingsDisabled) return
+      this.$set(this.activeState, 'settingsPending', true)
+      if (!this.sendSocket({ type: 'set_thinking_level', sessionId: this.activeSessionId, level, requestId: createId('thinking') })) this.activeState.settingsPending = false
+    },
     toggleTheme() {
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
       try { localStorage.setItem('orange-agent-theme', this.theme) } catch (_) { /* Keep the in-memory preference. */ }
@@ -446,6 +544,10 @@ export default {
         const key = draftKey(this.draftUserId, this.activeSessionId)
         const state = this.activeState
         const unsent = state && ['sending', 'unknown', 'rejected'].includes(state.delivery) ? state.lastPrompt : this.pendingPrompt
+        const unsentImages = state && ['sending', 'unknown', 'rejected'].includes(state.delivery) ? state.lastImages : this.pendingImages
+        const images = this.inputImages.length ? this.inputImages : unsentImages || []
+        if (images.length) this.$set(this.imageDrafts, key, images.slice())
+        else this.$delete(this.imageDrafts, key)
         const text = this.inputText || unsent
         if (text) window.sessionStorage.setItem(key, text)
         else window.sessionStorage.removeItem(key)
@@ -459,6 +561,10 @@ export default {
       this.saveDraft()
       this.activeSessionId = sessionId
       this.inputText = this.readDraft(sessionId)
+      this.inputImages = this.imageDrafts[draftKey(this.draftUserId, sessionId)] || []
+      this.imageReadVersion++
+      this.readingImages = false
+      this.imageError = ''
     },
     scheduleSessionSearch() {
       if (this.searchTimer) clearTimeout(this.searchTimer)
@@ -477,7 +583,7 @@ export default {
       }).catch(() => {})
     },
     trackRequest(message) {
-      if (!message.requestId || !['create_session', 'load_session', 'list_sessions', 'rename_session', 'prompt', 'abort'].includes(message.type)) return
+      if (!message.requestId || !['create_session', 'load_session', 'list_sessions', 'rename_session', 'prompt', 'abort', 'set_model', 'set_thinking_level'].includes(message.type)) return
       const request = { ...message }
       request.timer = setTimeout(() => {
         delete this.pendingRequests[message.requestId]
@@ -511,7 +617,10 @@ export default {
       } else if (request.type === 'create_session') {
         this.creatingSession = false
         if (this.pendingPrompt) this.inputText = this.pendingPrompt
+        if (this.pendingImages.length) this.inputImages = this.pendingImages
         this.pendingPrompt = ''
+        this.pendingImages = []
+        this.pendingNewModel = ''
         this.saveDraft()
       } else if (request.type === 'prompt') {
         const state = this.sessionStates[request.sessionId]
@@ -520,11 +629,16 @@ export default {
         state.delivery = uncertain ? 'unknown' : 'rejected'
         state.sendError = uncertain ? '连接中断或确认超时，尚不能确认消息是否送达。恢复连接后请检查历史，可取回问题继续编辑。' : reason
         state.lastPrompt = request.text
+        state.lastImages = request.images || []
         this.saveDraft()
         if (!uncertain) state.messages = state.messages.filter(message => message.id !== state.optimisticId)
       } else if (request.type === 'abort') {
         const state = this.sessionStates[request.sessionId]
         if (state) state.stopRequested = false
+        this.$message.warning(reason)
+      } else if (['set_model', 'set_thinking_level'].includes(request.type)) {
+        const state = this.sessionStates[request.sessionId]
+        if (state) state.settingsPending = false
         this.$message.warning(reason)
       } else if (request.type === 'rename_session') {
         this.$message.warning(reason)
@@ -532,9 +646,10 @@ export default {
     },
     retryFailedPrompt() {
       const state = this.activeState
-      if (!state || !state.lastPrompt || state.isStreaming) return
+      if (!state || (!state.lastPrompt && !(state.lastImages || []).length) || state.isStreaming) return
       if (state.delivery === 'unknown') {
         this.inputText = state.lastPrompt
+        this.inputImages = state.lastImages || []
         state.messages = state.messages.filter(message => message.id !== state.optimisticId)
         state.delivery = 'draft'
         state.sendError = ''
@@ -542,7 +657,7 @@ export default {
         this.focusComposer()
         return
       }
-      this.sendPromptToActive(state.lastPrompt)
+      this.sendPromptToActive(state.lastPrompt, false, state.lastImages || [])
     },
     clearEventQueue() {
       if (this.eventFlushTimer) clearTimeout(this.eventFlushTimer)
@@ -611,6 +726,14 @@ export default {
       this.loadingSessionIds = {}
       this.activeSessionId = null
       this.inputText = ''
+      this.inputImages = []
+      this.pendingImages = []
+      this.imageDrafts = {}
+      this.imageReadVersion++
+      this.readingImages = false
+      this.imageError = ''
+      this.models = []
+      this.pendingNewModel = ''
       this.pendingPrompt = ''
       this.creatingSession = false
       this.historyErrors = {}
@@ -791,19 +914,27 @@ export default {
           this.connectionError = ''
           this.connectionState = 'connected'
           this.draftUserId = message.userId || String(this.$store && this.$store.state.user.id || '')
+          this.models = message.models || []
           this.inputText = this.readDraft(this.activeSessionId)
+          this.inputImages = this.imageDrafts[draftKey(this.draftUserId, this.activeSessionId)] || []
           this.startHeartbeat()
           this.sessions = Array.isArray(message.sessions) ? message.sessions : []
           this.nextSessionCursor = message.nextCursor || null
           if (this.sessionQuery) this.requestSessions()
           if (this.activeSessionId) {
             this.loadSession(this.activeSessionId)
-          } else if (!this.inputText && this.sortedSessions.length) {
+          } else if (!this.inputText && !this.inputImages.length && this.sortedSessions.length) {
             this.selectSession(this.sortedSessions[0].id)
           } else {
             this.activeSessionId = null
           }
           Object.keys(this.sessionStates).filter(id => id !== this.activeSessionId && this.sessionStates[id].isStreaming).forEach(id => this.loadSession(id))
+          break
+        case 'models':
+          this.models = message.models || []
+          break
+        case 'ack':
+          if (request && ['set_model', 'set_thinking_level'].includes(request.type) && this.sessionStates[request.sessionId]) this.sessionStates[request.sessionId].settingsPending = false
           break
         case 'sessions':
           if (!request || request.query !== this.sessionQuery.trim() || message.requestId !== this.latestSessionRequestId) break
@@ -819,15 +950,23 @@ export default {
             break
           }
           const draft = this.inputText
+          const images = this.inputImages
+          const newModel = this.pendingNewModel
+          this.pendingNewModel = ''
           this.creatingSession = false
           this.installSnapshot(message.session)
           this.switchDraft(message.session.summary.id)
           if (draft) this.inputText = draft
-          if (this.pendingPrompt) {
+          if (images.length) this.inputImages = images
+          this.$delete(this.imageDrafts, draftKey(this.draftUserId, null))
+          try { window.sessionStorage.removeItem(draftKey(this.draftUserId, null)) } catch (_) { /* Optional local storage. */ }
+          if (newModel && newModel !== this.modelKey) this.setComposerModel(newModel)
+          if (this.pendingPrompt || this.pendingImages.length) {
             const prompt = this.pendingPrompt
+            const attachments = this.pendingImages
             this.pendingPrompt = ''
-            try { window.sessionStorage.removeItem(draftKey(this.draftUserId, null)) } catch (_) { /* Optional local storage. */ }
-            this.$nextTick(() => this.sendPromptToActive(prompt, true))
+            this.pendingImages = []
+            this.$nextTick(() => this.sendPromptToActive(prompt, true, attachments))
           }
           break
         }
@@ -864,6 +1003,7 @@ export default {
             state.sendError = ''
             state.isStreaming = true
           }
+          if (message.sessionId !== this.activeSessionId) this.$delete(this.imageDrafts, draftKey(this.draftUserId, message.sessionId))
           this.saveDraft()
           break
         }
@@ -924,6 +1064,7 @@ export default {
         id: message.id || createId('message'),
         role: message.role || 'assistant',
         text: message.text || '',
+        images: Array.isArray(message.images) ? message.images : [],
         thinking: message.thinking || '',
         tools: Array.isArray(message.tools) ? message.tools.map(tool => ({ ...tool })) : [],
         timestamp: message.timestamp || '',
@@ -968,6 +1109,8 @@ export default {
         phase: snapshot.phase || 'waiting',
         startedAt: snapshot.startedAt || '',
         lastPrompt: (messages.slice().reverse().find(message => message.role === 'user') || {}).text || '',
+        lastImages: (messages.slice().reverse().find(message => message.role === 'user') || {}).images || [],
+        settingsPending: false,
         sendError: '',
         delivery: '',
         optimisticId: '',
@@ -978,6 +1121,7 @@ export default {
       const previous = this.sessionStates[snapshot.summary.id]
       if (previous && ['unknown', 'rejected'].includes(previous.delivery)) {
         state.lastPrompt = previous.lastPrompt
+        state.lastImages = previous.lastImages || []
         state.delivery = snapshot.isStreaming ? 'accepted' : previous.delivery
         state.sendError = snapshot.isStreaming ? '' : previous.sendError
       }
@@ -985,6 +1129,7 @@ export default {
       if (!snapshot.isStreaming && last && last.error) {
         const question = [...messages].reverse().find(item => item.role === 'user')
         state.lastPrompt = question ? question.text : ''
+        state.lastImages = question ? question.images : []
         state.delivery = 'accepted'
         state.sendError = last.error
       }
@@ -1157,7 +1302,7 @@ export default {
         if (previous && previous.subagent && !tool.subagent) tool.subagent = previous.subagent
       })
       if (normalized.role === 'user') {
-        const optimisticIndex = state.messages.findIndex(item => item.role === 'user' && String(item.id).startsWith('optimistic-') && item.text === normalized.text)
+        const optimisticIndex = state.messages.findIndex(item => item.role === 'user' && item.id === state.optimisticId && (item.text === normalized.text || (item.images.length && normalized.images.length && normalized.text.startsWith(item.text))))
         if (optimisticIndex >= 0) {
           this.$set(state.messages, optimisticIndex, normalized)
           return
@@ -1186,6 +1331,7 @@ export default {
     },
     startNewConversation() {
       if (this.creatingSession) return
+      this.pendingImages = []
       this.switchDraft(null)
       this.pendingPrompt = ''
       this.mobileSidebarOpen = false
@@ -1215,45 +1361,59 @@ export default {
     },
     submitPrompt() {
       const prompt = this.inputText.trim()
-      if (!prompt || !this.canSubmit) return
+      if (!this.canSubmit) return
       if (!this.activeSessionId) {
         this.pendingPrompt = prompt
+        this.pendingImages = this.inputImages.slice()
+        this.inputImages = []
         this.inputText = ''
         this.creatingSession = true
         if (!this.sendSocket({ type: 'create_session', requestId: createId('create') })) {
           this.creatingSession = false
           this.inputText = this.pendingPrompt
+          this.inputImages = this.pendingImages
           this.pendingPrompt = ''
+          this.pendingImages = []
         }
         return
       }
       this.sendPromptToActive(prompt)
     },
-    sendPromptToActive(prompt, preserveDraft = false) {
+    sendPromptToActive(prompt, preserveDraft = false, images = this.inputImages) {
       const state = this.activeState
-      if (!state || state.isStreaming) return
+      if (!state || state.isStreaming || state.settingsPending) return
       if (this.loadingSessionIds[this.activeSessionId]) { this.$message.warning('正在同步对话，请稍后发送'); return }
       if (state.hasNewer) {
         this.$message.warning('请先回到最新消息，再继续提问')
         return
       }
+      if (images.length && !(this.currentModelInfo && this.currentModelInfo.supportsImages)) {
+        this.inputText = prompt
+        this.inputImages = images
+        this.imageError = '当前模型不支持图片，请选择标有「图像」的模型'
+        this.saveDraft()
+        return
+      }
+      const attachments = images.map(image => ({ ...image }))
       const requestId = createId('prompt')
-      if (!this.sendSocket({ type: 'prompt', sessionId: this.activeSessionId, text: prompt, requestId })) return
+      if (!this.sendSocket({ type: 'prompt', sessionId: this.activeSessionId, text: prompt, ...(attachments.length ? { images: attachments } : {}), requestId })) return
       state.optimisticId = createId('optimistic')
       state.messages.push(this.normalizeMessage({
         id: state.optimisticId,
         role: 'user',
         text: prompt,
+        images: attachments,
         timestamp: new Date().toISOString()
       }))
       state.isStreaming = true
       state.phase = 'waiting'
       state.startedAt = new Date().toISOString()
       state.lastPrompt = prompt
+      state.lastImages = attachments
       state.sendError = ''
       state.delivery = 'sending'
-      if (!state.summary.title) state.summary.title = prompt.slice(0, 48)
-      if (!preserveDraft) this.inputText = ''
+      if (!state.summary.title) state.summary.title = prompt.slice(0, 48) || '图片问答'
+      if (!preserveDraft) { this.inputText = ''; this.inputImages = [] }
       this.saveDraft()
       this.userPinnedScroll = false
       this.$nextTick(() => this.scrollToBottom(true))
@@ -1264,7 +1424,7 @@ export default {
       if (this.sendSocket({ type: 'abort', sessionId: this.activeSessionId, requestId: createId('abort') }) && this.activeState) this.activeState.stopRequested = true
     },
     handleComposerEnter(event) {
-      if (event.isComposing || event.shiftKey) return
+      if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
       event.preventDefault()
       this.submitPrompt()
     },
@@ -1302,6 +1462,7 @@ export default {
         this.switchDraft(null)
         if (this.sortedSessions.length) this.selectSession(this.sortedSessions[0].id)
       }
+      this.$delete(this.imageDrafts, draftKey(this.draftUserId, sessionId))
       try { if (this.draftUserId) window.sessionStorage.removeItem(draftKey(this.draftUserId, sessionId)) } catch (_) { /* Optional local storage. */ }
     },
     isMessageStreaming(message) {

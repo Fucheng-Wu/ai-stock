@@ -2,6 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validateClientMessage } from "../../shared/validation.js";
 import { MAX_BUFFERED_BYTES, sendEncoded } from "../src/lib/transport.js";
+import { MAX_IMAGE_BYTES, MAX_IMAGES, MAX_MESSAGE_BYTES } from "../../shared/images.js";
+
+test("image prompts accept image-only input and enforce wire format and limits", () => {
+  const image = { data: "aGVsbG8=", mimeType: "image/png", name: "图.png" };
+  const prompt = { type: "prompt", sessionId: "s", text: "", images: [image] };
+  assert.deepEqual(validateClientMessage(prompt), prompt);
+  assert.equal(validateClientMessage({ ...prompt, images: Array(MAX_IMAGES).fill(image) }).type, "prompt");
+  for (const images of [null, [null], [{ ...image, mimeType: "image/svg+xml" }],
+    [{ ...image, data: "data:image/png;base64,aGVsbG8=" }], [{ ...image, data: "bad!" }],
+    [{ ...image, data: "" }], [{ ...image, name: "x".repeat(257) }], Array(MAX_IMAGES + 1).fill(image),
+    [{ ...image, data: Buffer.alloc(MAX_IMAGE_BYTES + 1).toString("base64") }]]) {
+    assert.throws(() => validateClientMessage({ ...prompt, images }), /images/);
+  }
+  const maximum = { ...prompt, text: "x".repeat(500_000), images: Array(MAX_IMAGES).fill({ ...image, data: Buffer.alloc(MAX_IMAGE_BYTES).toString("base64") }) };
+  assert.ok(Buffer.byteLength(JSON.stringify(maximum)) < MAX_MESSAGE_BYTES);
+  assert.equal(validateClientMessage(maximum).type, "prompt");
+});
 
 test("wire validation checks payloads and never enables upstream filesystem commands", () => {
   assert.equal(validateClientMessage({ type: "init", protocolVersion: 1, accessToken: "user-token" }).type, "init");

@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { WebSocket, WebSocketServer } from "ws";
-import { PROTOCOL_VERSION, type AgentUiEvent, type ClientMessage, type ServerMessage, type SessionSnapshot, type ThinkingLevel } from "../../shared/types.js";
+import { PROTOCOL_VERSION, type AgentUiEvent, type ClientMessage, type ImageAttachment, type ServerMessage, type SessionSnapshot, type ThinkingLevel } from "../../shared/types.js";
+import { MAX_MESSAGE_BYTES } from "../../shared/images.js";
 import { validateClientMessage } from "../../shared/validation.js";
 import { WsAuthInteraction } from "./lib/auth-bridge.js";
 import { loadGatewayEnvironment, MySqlSessionStore } from "./lib/database.js";
@@ -236,8 +237,9 @@ function lastPromptError(active: ActiveSession): string | undefined {
     : undefined;
 }
 
-function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string): void {
+function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string, images?: ImageAttachment[]): void {
   if (active.promptTask || active.operationTask || !active.session.isIdle) throw new Error("此会话正在工作，请等待或先取消");
+  if (images?.length && !active.session.model?.input.includes("image")) throw new Error("当前模型不支持图片，请切换到支持图像输入的模型");
   active.role.controller = new AbortController();
   active.startedAt = new Date().toISOString();
   active.phase = "waiting";
@@ -249,7 +251,7 @@ function startPrompt(ws: WebSocket, active: ActiveSession, text: string, request
     if (active.role.controller.signal.aborted) throw new Error("已取消发送");
     accepted = true;
     send(ws, { type: "prompt_accepted", sessionId: active.id, requestId });
-    await runWithStockToolToken(stockAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false }));
+    await runWithStockToolToken(stockAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false, images: images?.map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType })) }));
     promptError = lastPromptError(active);
   })()
     .catch((error) => {
@@ -419,7 +421,7 @@ async function route(ws: WebSocket, auth: WsAuthInteraction, message: ClientMess
       return;
     case "prompt": {
       const active = await getSession(userId, requireText(message.sessionId, "sessionId", 128));
-      startPrompt(ws, active, requireText(message.text, "text"), requestId, identity.token);
+      startPrompt(ws, active, message.text, requestId, identity.token, message.images);
       return;
     }
     case "abort": {
@@ -575,7 +577,7 @@ app.get("/api/health", (context) => context.json({ ok: true, service: "pi-agent-
 app.get("/", (context) => context.text("Pi Agent Gateway is running"));
 
 const server = serve({ fetch: app.fetch, hostname: host, port });
-const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
 
 function acceptedOrigin(origin: string | undefined): boolean {
   if (!origin) return true; // CLI clients have no browser Origin.

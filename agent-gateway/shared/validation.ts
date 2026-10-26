@@ -1,4 +1,5 @@
 import type { ClientMessage } from "./types.js";
+import { isImageAttachment, MAX_IMAGES } from "./images.js";
 
 type Rule = (value: unknown) => boolean;
 const text = (max = 100_000): Rule => value => typeof value === "string" && !!value.trim() && value.length <= max;
@@ -19,7 +20,8 @@ const commands = {
   permission_response: { permissionId: text(128), decision: choice("allow_once", "allow_session", "deny") },
   load_session: { ...session, before: optional(text(128)) }, rename_session: { ...session, title: text(64) },
   delete_session: session, abort: session,
-  prompt: { ...session, text: text(500_000), stockAccessToken: optional(text(8192)) },
+  prompt: { ...session, text: string(500_000), stockAccessToken: optional(text(8192)),
+    images: optional(value => Array.isArray(value) && value.length <= MAX_IMAGES && value.every(isImageAttachment)) },
   set_model: { ...session, provider: text(128), modelId: text(256) },
   set_thinking_level: { ...session, level: choice("off", "minimal", "low", "medium", "high", "xhigh", "max") },
   list_models: {}, get_models_config: {}, save_models_config: { content: text(2_000_000) },
@@ -45,6 +47,9 @@ export function validateClientMessage(value: unknown): ClientMessage {
   const rules: Record<string, Rule> = commands[message.type as keyof typeof commands];
   for (const [field, rule] of Object.entries(rules)) {
     if (!rule(message[field])) throw new Error(`${message.type}.${field} 无效`);
+  }
+  if (message.type === "prompt" && !(message.text as string).trim() && !(message.images as unknown[] | undefined)?.length) {
+    throw new Error("请填写消息或上传图片");
   }
   return message as ClientMessage;
 }
