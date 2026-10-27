@@ -1,5 +1,7 @@
 param(
-    [switch]$Install
+    [switch]$Install,
+    [ValidateRange(1, 65535)]
+    [int]$Port
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,7 +25,8 @@ try {
         $env:PI_WORKSPACE_DIR = $projectRoot
     }
     if ([string]::IsNullOrWhiteSpace($env:HOST)) { $env:HOST = '127.0.0.1' }
-    if ([string]::IsNullOrWhiteSpace($env:PORT)) { $env:PORT = '3000' }
+    if ($PSBoundParameters.ContainsKey('Port')) { $env:PORT = "$Port" }
+    elseif ([string]::IsNullOrWhiteSpace($env:PORT)) { $env:PORT = '3000' }
 
     Write-Host "Starting Agent Gateway from $gatewayRoot"
     Write-Host "Agent workspace: $env:PI_WORKSPACE_DIR"

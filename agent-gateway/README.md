@@ -75,29 +75,30 @@ Agent 会复用 `PI_AGENT_DIR` 下的：
 - `auth.json`：Provider 凭证；
 - `settings.json`：Pi 设置；
 - `sessions/`：Pi 运行时 JSONL；完整内容会同步备份到 MySQL；
-- `mcp.json`：保留配置管理能力；当前普通 Agent 和两个子代理均不加载 MCP。
+- `mcp.json`：保留配置管理能力；当前普通 Agent 和三个子代理均不加载 MCP。
 
 项目专属技能和子 Agent 分别放在 `backend/skills` 与 `backend/subagents`。
 
-## 主 Agent、股票分析与信息检索子代理
+## 主 Agent、股票分析、全市场选股与信息检索子代理
 
 主 Agent 固定为 `general`（普通 Agent），可以正常文字对话，唯一工具是 `Agent`，且只能
-委派给 `stock-analyst`（股票行情与分析）或 `web-researcher`（各领域公开信息检索）。所有股票分析问题由股票子代理处理。新版不会提供上游的 Build、Plan
+委派给 `stock-analyst`（股票行情与分析）、`web-researcher`（各领域公开信息检索）或 `stock-screener`（全市场520选股）。具体股票分析由股票子代理处理，筛选候选与快照证据由选股子代理处理。新版不会提供上游的 Build、Plan
 或全局自定义角色；旧会话和 MySQL 恢复的会话也统一使用此限制。
 
-股票子代理配置在 `backend/subagents/stock-analyst/agent.md`，信息检索子代理配置在 `backend/subagents/web-researcher/agent.md`。
+三个角色配置分别位于 `backend/subagents/stock-analyst/agent.md`、`backend/subagents/web-researcher/agent.md` 和 `backend/subagents/stock-screener/agent.md`。
 
 工具实现同样归属各自角色目录：`stock-analyst/tools.ts` 提供股票业务工具和本轮身份透传，
-`web-researcher/web-search.ts` 提供联网搜索。`src/lib/feature-manager.ts` 创建子代理时显式导入并按角色挂载，
+`web-researcher/web-search.ts` 提供联网搜索，`stock-screener/tools.ts` 提供选股快照查询。`src/lib/feature-manager.ts` 创建子代理时显式导入并按角色挂载，
 通用权限控制继续保留在 `src/lib`。
 
 工具固定为：
 
 - 股票子代理：`stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，复用 Java 股票服务；
 - 信息检索子代理：仅 `web_search`，通过 Tavily 查询各领域公开网页，包括公告、行业和财经资讯。
+- 全市场选股子代理：仅 `stock_screen`、`stock_screen_detail`，通过 `STOCK_API_BASE_URL` 的鉴权接口查询 MySQL 已完成沪深北日线快照，重新校验股票权限。若依16点采集、17点筛选，固定北京时间；迁移和调度见 `../docs/deploy-stock-screener.md`。不再读取 `STOCK_SCREEN_DATA_DIR`，接口失败不回退到文件。
 
 混合任务由主 Agent 先检索，再将带来源、日期和不确定性的结果交给股票子代理分析。
-股票子代理需要更多外部证据时向主 Agent 提出检索需求。两者不能相互调用。
+股票或选股子代理需要更多外部证据时向主 Agent 提出检索需求。三个子代理不能相互调用。
 
 两层代理均不提供文件、目录、代码检索、写入、编辑、终端、执行代码、MCP 等能力。
 工具可见性与执行权限双重限制；修改配置中的 tools、extensions 或 skills 不能扩大权限。
@@ -108,7 +109,7 @@ Agent 会复用 `PI_AGENT_DIR` 下的：
 
 权限协议兼容上游的 `action` 和 `patterns`，前端按队列展示操作对象与本会话授权范围。
 本会话授权只在当前角色和会话内生效，可放行匹配的待确认操作；拒绝会取消该会话其余
-待确认请求。明确禁止的操作不会被已记忆授权放行。当前普通 Agent 和两个子代理的
+待确认请求。明确禁止的操作不会被已记忆授权放行。当前普通 Agent 和三个子代理的
 固定白名单仍优先生效，正常股票工具无需确认，内部操作直接拒绝。
 
 `stock-520` 和 `web-research` 由服务端读取项目内指定文件，将正文分别注入股票和信息检索子代理，

@@ -37,7 +37,7 @@ sql/agent_chat.sql
 ```
 
 也可以使用 `bin\start-agent-gateway.cmd`。启动脚本默认把 `PI_WORKSPACE_DIR` 设置为
-当前 `ai-stock` 仓库根目录，作为会话工作目录标识。普通 Agent 与两个子代理均不开放
+当前 `ai-stock` 仓库根目录，作为会话工作目录标识。普通 Agent 与三个子代理均不开放
 文件和终端工具；改动工作目录不会扩大工具权限。需要改为其他目录时，可在启动前
 显式设置该环境变量。
 
@@ -49,12 +49,16 @@ sql/agent_chat.sql
 新会话默认使用 DeepSeek Flash，型号为 `deepseek-flash`。可在网关环境配置中通过 `AGENT_DEFAULT_MODEL` 指定 `deepseek` Provider
 下已配置的其他模型 ID。默认型号不存在时会提示配置错误。
 
+新会话思考强度默认 `low`，不会继承全局高强度默认值，实际能力仍受模型配置约束。
+输入框不显示角色、模型、思考强度或上下文占比模块；图片上传位于框内左下角。
+已保存会话仍按原模型与思考强度恢复。
+
 在 `agent-gateway/.env` 中填写 `DEEPSEEK_API_KEY`，或从 Agent 设置页配置 DeepSeek
 Provider 的认证。未配置认证时仍可创建会话，发送消息会提示先配置 Provider 认证。
 Java 股票分析服务中的 DeepSeek Key 与网关配置独立，需要分别配置。
 
 生产环境对应配置文件为 `config/agent-gateway.env`。修改环境变量后重启网关，新建
-会话使用新的默认值；已有会话恢复已保存的模型，也可以在页面手动切换当前会话模型。
+会话使用新的默认值；已有会话恢复已保存的模型和思考配置，输入框不再提供切换控件。
 
 ## 生产环境
 
@@ -180,15 +184,16 @@ MCP 配置必须另外具备 `agent:chat:manage`，在每个 WebSocket 命令执
 ## 股票分析、信息检索与专属技能
 
 主 Agent 固定为“普通 Agent”（`general`），唯一工具为 `Agent`，且只能调用
-`stock-analyst` 股票子代理或 `web-researcher` 信息检索子代理。股票行情与分析必须委派给前者；
-各领域公开资料、新闻和来源核实委派给后者；其他问题可以正常文字对话。
+`stock-analyst` 股票分析、`web-researcher` 信息检索或 `stock-screener` 全市场选股子代理。
+具体标的行情与分析交给股票分析角色，公开资料交给信息检索角色，全市场520候选和快照证据交给选股角色；其他问题可以正常文字对话。
 旧会话、JSONL 和 MySQL 备份恢复的会话也使用同一角色，不能切换到上游 Build/Plan
 或通过自定义角色放开权限。
 
 股票子代理内置以下只读业务工具，复用 Java 股票分析服务：
 
 工具代码位于 `agent-gateway/backend/subagents/stock-analyst/tools.ts`；联网搜索代码位于
-`agent-gateway/backend/subagents/web-researcher/web-search.ts`。网关通过固定导入按角色挂载工具，部署时需要包含这两个子代理目录。
+`agent-gateway/backend/subagents/web-researcher/web-search.ts`；选股工具位于
+`agent-gateway/backend/subagents/stock-screener/tools.ts`。网关通过固定导入按角色挂载工具，部署时需要包含三个子代理目录。
 
 | 工具 | 用途 | 后端接口 |
 | --- | --- | --- |
@@ -196,6 +201,8 @@ MCP 配置必须另外具备 `agent:chat:manage`，在每个 WebSocket 命令执
 | `stock_quote` | 最新行情、涨跌幅、成交量额 | `GET /stock/analyzer/quote/{stockCode}` |
 | `stock_kline` | 最近1～60根日K线及MA5/MA10/MA20 | `GET /stock/analyzer/kline/{stockCode}?limit=30` |
 | `stock_analyze` | 行情、指标、520结构化规则报告，不重复调用DeepSeek | `POST /stock/analyzer/analyze`，`includeAi=false` |
+| `stock_screen` | 查询全市场520候选，按买点/交易所/ST/名称筛选及分页 | 调用 `/stock/screener/results` 读取MySQL，沿用登录与股票权限 |
+| `stock_screen_detail` | 同一快照的逐只完整证据，包括未命中和排除原因 | 调用 `/stock/screener/detail` 读取MySQL，沿用登录与股票权限 |
 
 配置 `agent-gateway/.env`（生产环境为 `config/agent-gateway.env`）：
 
@@ -231,8 +238,14 @@ TAVILY_API_KEY=填写Tavily密钥
 两层代理均禁止 `read`、`grep`、`find`、`ls`、`write`、`edit`、`bash`、执行代码等内部
 工具，并关闭全局扩展、MCP、项目上下文和提示模板的自动加载。工具权限由后端精确
 白名单限制，不能通过修改角色文件或页面设置扩大。股票技能已加载在系统提示中，无需
-也不能让代理读取文件。主 Agent 不直接调用股票工具或搜索工具，两个子代理不能相互或递归委派。
-管理页分别控制两个角色的启停，运行时配置文件仍为 `backend/subagents/settings.json`。
+也不能让代理读取文件。主 Agent 不直接调用股票、选股或搜索工具，三个子代理不能相互或递归委派。
+管理页分别控制三个角色的启停，运行时配置文件仍为 `backend/subagents/settings.json`。
+
+全市场选股通过 `STOCK_API_BASE_URL` 调用 Java 鉴权接口读取 MySQL，接口失败不回退到本地文件。
+若依每天北京时间16点采集全市场双口径日线、17点筛选并保存完整规则证据，休市或采集失败不发布当日结果。
+首次升级先迁移六张业务表及 sys_job.time_zone，再导入旧SQLite和结果，最后启动新版Java与网关。
+步骤见 `docs/deploy-stock-screener.md`，`STOCK_SCREEN_DATA_DIR` 已不用于正式查询。
+工具保持实际行情日期和 snapshotId，不把旧日线候选当作当天实时信号。
 
 更新并重启网关后，在新会话中可以提问：
 

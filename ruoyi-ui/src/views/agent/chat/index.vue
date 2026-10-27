@@ -186,9 +186,8 @@
         </div>
       </section>
 
-      <button v-if="userPinnedScroll && activeState && !activeState.hasNewer" class="agent-jump-latest" type="button" aria-label="回到最新消息" @click="scrollToBottom(true)"><i class="el-icon-bottom" /> 最新消息</button>
-
       <footer class="agent-composer-area">
+        <button v-if="userPinnedScroll && activeState && !activeState.hasNewer" class="agent-jump-latest" type="button" aria-label="回到最新消息" @click="scrollToBottom(true)"><i class="el-icon-bottom" /> 最新消息</button>
         <button v-if="activeState && activeState.hasNewer" class="agent-history-button" type="button" :disabled="!isConnected" @click="loadSession(activeSessionId)">回到最新消息</button>
         <div v-if="activeState && activeState.isStreaming" class="agent-run-status" role="status" aria-live="polite"><i class="el-icon-loading" /> {{ runPhaseLabel }} <span>{{ runElapsed }}</span></div>
         <div v-if="activeState && activeState.sendError" class="agent-request-error" role="alert">{{ activeState.sendError }} <button type="button" :disabled="!isConnected || activeState.isStreaming" @click="retryFailedPrompt">{{ activeState.delivery === 'unknown' ? '取回问题' : activeState.delivery === 'accepted' ? '重新提问' : '重试发送' }}</button></div>
@@ -207,7 +206,7 @@
             v-model="inputText"
             class="agent-composer__input"
             type="textarea"
-            :autosize="{ minRows: 3, maxRows: 6 }"
+            :autosize="{ minRows: 1, maxRows: 6 }"
             maxlength="12000"
             resize="none"
             :disabled="connectionState === 'auth-expired' || connectionState === 'forbidden'"
@@ -216,41 +215,31 @@
             @blur="composerFocused = false"
             @keydown.enter.native="handleComposerEnter"
           />
-          <button
-            v-if="activeState && activeState.isStreaming"
-            class="agent-composer__send is-stop"
-            type="button"
-            title="停止生成"
-            aria-label="停止生成"
-            :disabled="activeState.stopRequested || !isConnected"
-            @click="abortGeneration"
-          >
-            <span />
-          </button>
-          <button
-            v-else
-            class="agent-composer__send"
-            type="button"
-            title="发送消息"
-            aria-label="发送消息"
-            :disabled="!canSubmit"
-            @click="submitPrompt"
-          >
-            <i class="el-icon-top" />
-          </button>
-        </div>
-        <div class="agent-composer-toolbar" role="group" aria-label="对话设置与附件">
-          <button class="agent-icon-button" type="button" :disabled="!canAttach || inputImages.length >= 4" title="上传图片（最多4张，每张5 MB）" aria-label="上传图片" @click="$refs.imageInput.click()"><i class="el-icon-picture-outline" /></button>
-          <span class="agent-composer-role"><i class="el-icon-user" /> 普通 Agent</span>
-          <select :value="modelKey" aria-label="选择模型" :disabled="settingsDisabled" @change="setComposerModel($event.target.value)">
-            <option v-if="!modelKey" value="">选择模型（默认 DeepSeek）</option>
-            <option v-if="modelKey && !currentModelInfo" :value="modelKey">{{ activeModel }}</option>
-            <option v-for="model in models" :key="JSON.stringify([model.provider, model.id])" :value="JSON.stringify([model.provider, model.id])">{{ model.name || model.id }} · {{ model.provider }}{{ model.supportsImages ? ' · 图像' : '' }}{{ model.reasoning ? ' · 推理' : '' }}</option>
-          </select>
-          <select v-if="activeState" :value="activeState.thinkingLevel || 'medium'" aria-label="思考强度" :disabled="settingsDisabled" @change="setComposerThinking($event.target.value)">
-            <option value="off">关闭思考</option><option value="minimal">最少思考</option><option value="low">低强度</option><option value="medium">中等思考</option><option value="high">高强度</option><option value="xhigh">更高强度</option><option value="max">最大强度</option>
-          </select>
-          <span v-if="contextLabel" class="agent-composer-context">{{ contextLabel }}</span>
+          <div class="agent-composer__actions" role="group" aria-label="消息附件与发送">
+            <button class="agent-icon-button agent-composer__attach" type="button" :disabled="!canAttach || inputImages.length >= 4" title="上传图片（最多4张，每张5 MB）" aria-label="上传图片" @click="$refs.imageInput.click()"><i class="el-icon-picture-outline" /></button>
+            <button
+              v-if="activeState && activeState.isStreaming"
+              class="agent-composer__send is-stop"
+              type="button"
+              title="停止生成"
+              aria-label="停止生成"
+              :disabled="activeState.stopRequested || !isConnected"
+              @click="abortGeneration"
+            >
+              <span />
+            </button>
+            <button
+              v-else
+              class="agent-composer__send"
+              type="button"
+              title="发送消息"
+              aria-label="发送消息"
+              :disabled="!canSubmit"
+              @click="submitPrompt"
+            >
+              <i class="el-icon-top" />
+            </button>
+          </div>
         </div>
         <div class="agent-composer__meta">
           <span><kbd>Enter</kbd> 发送 <span class="agent-composer__separator">·</span> <kbd>Shift + Enter</kbd> 换行 · 可粘贴或拖入图片</span>
@@ -336,7 +325,6 @@ export default {
       imageError: '',
       imageAccept: IMAGE_MIME_TYPES.join(','),
       models: [],
-      pendingNewModel: '',
       pendingPrompt: '',
       creatingSession: false,
       composerFocused: false,
@@ -433,10 +421,7 @@ export default {
     },
     imageModelError() {
       return this.inputImages.length && this.activeState && !(this.currentModelInfo && this.currentModelInfo.supportsImages)
-        ? '当前模型不支持图片，请选择标有「图像」的模型' : ''
-    },
-    settingsDisabled() {
-      return !this.isConnected || this.creatingSession || Boolean(this.activeSessionId && this.loadingSessionIds[this.activeSessionId]) || Boolean(this.activeState && (this.activeState.isStreaming || this.activeState.settingsPending))
+        ? '当前模型未启用图像输入，暂时无法发送图片' : ''
     },
     canAttach() {
       return !this.creatingSession && !this.readingImages && !['auth-expired', 'forbidden'].includes(this.connectionState) && !(this.activeState && this.activeState.isStreaming)
@@ -449,11 +434,6 @@ export default {
     },
     isSessionLoading() {
       return Boolean(this.activeSessionId && !this.activeState && this.loadingSessionIds[this.activeSessionId])
-    },
-    contextLabel() {
-      const usage = this.activeState && this.activeState.contextUsage
-      if (!usage || usage.percent === undefined) return ''
-      return `上下文已用 ${Math.round(usage.percent)}%`
     }
   },
   watch: {
@@ -515,25 +495,6 @@ export default {
       if (files.length) { event.preventDefault(); this.addImages(files) }
     },
     onImageDrop(event) { this.addImages(event.dataTransfer && event.dataTransfer.files) },
-    setComposerModel(value) {
-      if (!value || this.settingsDisabled) return
-      this.imageError = ''
-      if (!this.activeState) {
-        this.pendingNewModel = value
-        this.creatingSession = true
-        if (!this.sendSocket({ type: 'create_session', requestId: createId('create') })) { this.creatingSession = false; this.pendingNewModel = '' }
-        return
-      }
-      const [provider, modelId] = JSON.parse(value)
-      const requestId = createId('model')
-      this.$set(this.activeState, 'settingsPending', true)
-      if (!this.sendSocket({ type: 'set_model', sessionId: this.activeSessionId, provider, modelId, requestId })) this.activeState.settingsPending = false
-    },
-    setComposerThinking(level) {
-      if (!this.activeState || this.settingsDisabled) return
-      this.$set(this.activeState, 'settingsPending', true)
-      if (!this.sendSocket({ type: 'set_thinking_level', sessionId: this.activeSessionId, level, requestId: createId('thinking') })) this.activeState.settingsPending = false
-    },
     toggleTheme() {
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
       try { localStorage.setItem('orange-agent-theme', this.theme) } catch (_) { /* Keep the in-memory preference. */ }
@@ -620,7 +581,6 @@ export default {
         if (this.pendingImages.length) this.inputImages = this.pendingImages
         this.pendingPrompt = ''
         this.pendingImages = []
-        this.pendingNewModel = ''
         this.saveDraft()
       } else if (request.type === 'prompt') {
         const state = this.sessionStates[request.sessionId]
@@ -733,7 +693,6 @@ export default {
       this.readingImages = false
       this.imageError = ''
       this.models = []
-      this.pendingNewModel = ''
       this.pendingPrompt = ''
       this.creatingSession = false
       this.historyErrors = {}
@@ -951,8 +910,6 @@ export default {
           }
           const draft = this.inputText
           const images = this.inputImages
-          const newModel = this.pendingNewModel
-          this.pendingNewModel = ''
           this.creatingSession = false
           this.installSnapshot(message.session)
           this.switchDraft(message.session.summary.id)
@@ -960,7 +917,6 @@ export default {
           if (images.length) this.inputImages = images
           this.$delete(this.imageDrafts, draftKey(this.draftUserId, null))
           try { window.sessionStorage.removeItem(draftKey(this.draftUserId, null)) } catch (_) { /* Optional local storage. */ }
-          if (newModel && newModel !== this.modelKey) this.setComposerModel(newModel)
           if (this.pendingPrompt || this.pendingImages.length) {
             const prompt = this.pendingPrompt
             const attachments = this.pendingImages
@@ -1098,7 +1054,7 @@ export default {
         summary: { ...snapshot.summary },
         messages,
         model: snapshot.model || null,
-        thinkingLevel: snapshot.thinkingLevel || 'medium',
+        thinkingLevel: snapshot.thinkingLevel || 'low',
         isStreaming: Boolean(snapshot.isStreaming),
         streamMessageId,
         contextUsage: snapshot.contextUsage || null,
@@ -1390,7 +1346,7 @@ export default {
       if (images.length && !(this.currentModelInfo && this.currentModelInfo.supportsImages)) {
         this.inputText = prompt
         this.inputImages = images
-        this.imageError = '当前模型不支持图片，请选择标有「图像」的模型'
+        this.imageError = '当前模型未启用图像输入，暂时无法发送图片'
         this.saveDraft()
         return
       }

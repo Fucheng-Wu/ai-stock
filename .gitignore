@@ -64,3 +64,7 @@ agent-gateway/.env
 agent-gateway/.env.*
 !agent-gateway/.env.example
 agent-gateway/*.tsbuildinfo
+
+# Downloaded stock history and Python caches
+/data/stock-history/
+__pycache__/

@@ -79,7 +79,7 @@ async function main() {
           if (command.type === 'list_sessions') this.deliver({ type: 'sessions', sessions: sessions.filter(session => session.title.includes(command.query || '')), requestId })
           if (command.type === 'load_session') this.deliver({ type: 'session_state', requestId, session: {
             summary: sessions.find(session => session.id === command.sessionId), isStreaming: false, epoch: 'preview', sequence: 0,
-            model: { provider: 'deepseek', id: 'deepseek-flash' }, thinkingLevel: 'medium', contextUsage: { percent: 12 },
+            model: { provider: 'deepseek', id: 'deepseek-flash' }, thinkingLevel: 'low', contextUsage: { percent: 12 },
             messages: [
               { id: 'question', role: 'user', text: '帮我梳理520战法的判断顺序，重点看趋势和回踩信号。', timestamp: today },
               { id: 'answer', role: 'assistant', timestamp: today, thinking: '先说明方法的判断顺序，再把趋势、买点和执行条件分开呈现。',
@@ -97,6 +97,27 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message))
     await page.goto(`${origin}/agent/chat`, { waitUntil: 'networkidle' })
     await page.getByText('先看趋势，再找信号', { exact: true }).waitFor()
+    const composerInput = page.locator('.agent-composer textarea')
+    const initialHeight = await page.locator('.agent-composer').evaluate(element => element.getBoundingClientRect().height)
+    assert.ok(initialHeight <= 120, 'empty composer should be about two thirds of the previous 162px height')
+    const attachment = page.getByRole('button', { name: '上传图片', exact: true })
+    const idleBackground = await attachment.evaluate(element => getComputedStyle(element).backgroundColor)
+    await attachment.hover()
+    await page.waitForFunction(background => getComputedStyle(document.querySelector('.agent-composer__attach')).backgroundColor !== background, idleBackground)
+    assert.equal(await attachment.evaluate(element => getComputedStyle(element).borderRadius), '50%')
+    await page.locator('.agent-composer').screenshot({ path: path.join(output, 'agent-composer-hover.png') })
+    await composerInput.fill('第一行\n第二行\n第三行\n第四行')
+    await page.waitForFunction(height => document.querySelector('.agent-composer').getBoundingClientRect().height > height + 40, initialHeight)
+    await composerInput.fill(Array.from({ length: 20 }, (_, index) => `第${index + 1}行`).join('\n'))
+    await page.waitForFunction(() => {
+      const input = document.querySelector('.agent-composer textarea')
+      return input.scrollHeight > input.clientHeight && input.clientHeight <= parseFloat(getComputedStyle(input).lineHeight) * 6 + 6
+    })
+    const cappedHeight = await composerInput.evaluate(element => element.getBoundingClientRect().height)
+    await composerInput.fill(Array.from({ length: 40 }, (_, index) => `第${index + 1}行`).join('\n'))
+    assert.ok(Math.abs(await composerInput.evaluate(element => element.getBoundingClientRect().height) - cappedHeight) <= 1, 'composer must stop growing after six rows')
+    await composerInput.fill('')
+    await page.waitForFunction(height => Math.abs(document.querySelector('.agent-composer').getBoundingClientRect().height - height) <= 1, initialHeight)
     await page.locator('.agent-session-item').first().hover()
     const edit = await page.getByRole('button', { name: '重命名对话', exact: true }).first().boundingBox()
     const remove = await page.getByRole('button', { name: '删除对话', exact: true }).first().boundingBox()
@@ -161,7 +182,21 @@ async function main() {
     await page.locator('input[type=file]').setInputFiles({ name: 'chart.png', mimeType: 'image/png', buffer: png })
     await page.locator('.agent-composer-image .el-image__inner').waitFor()
     assert.equal(await page.getByRole('button', { name: '发送消息', exact: true }).isDisabled(), true)
-    await page.getByLabel('选择模型', { exact: true }).selectOption(JSON.stringify(['preview', 'vision']))
+    assert.equal(await page.getByLabel('选择模型', { exact: true }).count(), 0)
+    assert.equal(await page.getByLabel('思考强度', { exact: true }).count(), 0)
+    assert.equal(await page.locator('.agent-composer-role, .agent-composer-context, .agent-composer-toolbar').count(), 0)
+    const attachmentPlacement = await page.evaluate(() => {
+      const box = document.querySelector('.agent-composer').getBoundingClientRect()
+      const text = document.querySelector('.agent-composer textarea').getBoundingClientRect()
+      const attach = document.querySelector('.agent-composer__attach').getBoundingClientRect()
+      const send = document.querySelector('.agent-composer__send').getBoundingClientRect()
+      return attach.left >= box.left && attach.right < box.left + box.width / 2
+        && attach.top >= text.bottom && attach.bottom <= box.bottom && Math.abs(attach.bottom - send.bottom) <= 1
+    })
+    assert.ok(attachmentPlacement, 'upload button must sit inside the lower left of the composer, below the text')
+    await page.evaluate(() => window.previewSocket.deliver({ type: 'models', models: [
+      { provider: 'deepseek', id: 'deepseek-flash', name: 'DeepSeek', supportsImages: true, reasoning: true }
+    ] }))
     await page.waitForFunction(() => !document.querySelector('.agent-composer__send').disabled)
     await page.locator('.agent-composer-image .el-image').click()
     await page.locator('.el-image-viewer__wrapper').waitFor()
@@ -189,7 +224,7 @@ async function main() {
     await page.getByRole('button', { name: '移除图片 1', exact: true }).click()
     assert.equal(await page.locator('.agent-composer-image').count(), 1)
     assert.deepEqual(errors, [], 'browser runtime errors')
-    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer', 'subagent split view', 'live child updates', 'scroll following', 'theme persistence', 'dark theme', 'mobile subagent', 'image upload and preview', 'model vision gate', 'image-only send', 'image reconciliation', 'image paste and drop', 'mobile image composer'], browserErrors: errors }))
+    console.log(JSON.stringify({ screenshots: output, checks: ['desktop conversation', 'welcome', 'tool details', 'distinct session actions', 'mobile overflow', 'mobile drawer', 'subagent split view', 'live child updates', 'scroll following', 'theme persistence', 'dark theme', 'mobile subagent', 'image upload and preview', 'model vision gate', 'image-only send', 'image reconciliation', 'image paste and drop', 'mobile image composer', 'attachment inside lower left', 'simplified composer', 'circular attachment hover', 'compact composer', 'bounded autosize'], browserErrors: errors }))
   } finally {
     if (browser) await browser.close()
     server.closeAllConnections()

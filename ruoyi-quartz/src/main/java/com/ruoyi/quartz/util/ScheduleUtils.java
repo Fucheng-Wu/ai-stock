@@ -67,6 +67,11 @@ public class ScheduleUtils
 
         // 表达式调度构建器
         CronScheduleBuilder cronScheduleBuilder = CronScheduleBuilder.cronSchedule(job.getCronExpression());
+        if (StringUtils.isNotEmpty(job.getTimeZone()))
+        {
+            try { cronScheduleBuilder = cronScheduleBuilder.inTimeZone(java.util.TimeZone.getTimeZone(java.time.ZoneId.of(job.getTimeZone()))); }
+            catch (java.time.DateTimeException e) { throw new TaskException("无效的任务时区：" + job.getTimeZone(), Code.CONFIG_ERROR); }
+        }
         cronScheduleBuilder = handleCronScheduleMisfirePolicy(job, cronScheduleBuilder);
 
         // 按新的cronExpression表达式构建一个新的trigger

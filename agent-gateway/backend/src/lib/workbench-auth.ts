@@ -27,7 +27,8 @@ export class WorkbenchAuthError extends Error {
 }
 
 /** Resolve identity from the trusted RuoYi service, never from a client-supplied user ID. */
-export async function authenticateWorkbench(token: unknown): Promise<WorkbenchIdentity> {
+export async function authenticateWorkbench(token: unknown, options: { signal?: AbortSignal; requiredPermission?: string } = {}): Promise<WorkbenchIdentity> {
+  options.signal?.throwIfAborted();
   if (typeof token !== "string" || !token.trim() || token.length > 8192 || /\s/.test(token)) {
     throw new WorkbenchAuthError("请登录工作台后连接 Agent 助手。");
   }
@@ -40,9 +41,10 @@ export async function authenticateWorkbench(token: unknown): Promise<WorkbenchId
     response = await fetch(`${baseUrl.toString().replace(/\/$/, "")}/getInfo`, {
       headers: { Authorization: `Bearer ${token}` },
       redirect: "error",
-      signal: AbortSignal.timeout(10_000),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     });
   } catch {
+    if (options.signal?.aborted) throw new Error("工作台身份校验已取消。");
     throw new WorkbenchServiceError("工作台服务暂不可用，正在等待重新连接，草稿已保留。");
   }
   if (response.status === 401) throw new WorkbenchAuthError("工作台登录已失效，请重新登录。");
@@ -64,5 +66,8 @@ export async function authenticateWorkbench(token: unknown): Promise<WorkbenchId
     throw new WorkbenchAuthError("当前账号没有 Agent 助手权限（agent:chat:use）。", "FORBIDDEN");
   }
   const canManage = result.permissions.some((permission) => permission === "*:*:*" || permission === "agent:chat:manage");
+  if (options.requiredPermission && !result.permissions.some((permission) => permission === "*:*:*" || permission === options.requiredPermission)) {
+    throw new WorkbenchAuthError(`当前账号没有股票分析权限（${options.requiredPermission}）。`, "FORBIDDEN");
+  }
   return { userId: String(id), token, canManage, authorizedUntil: Date.now() + 60_000 };
 }

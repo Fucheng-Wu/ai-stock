@@ -10,6 +10,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 		<result property="jobGroup"       column="job_group"       />
 		<result property="invokeTarget"   column="invoke_target"   />
 		<result property="cronExpression" column="cron_expression" />
+		<result property="timeZone"       column="time_zone"       />
 		<result property="misfirePolicy"  column="misfire_policy"  />
 		<result property="concurrent"     column="concurrent"      />
 		<result property="status"         column="status"          />
@@ -21,7 +22,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 	</resultMap>
 	
 	<sql id="selectJobVo">
-        select job_id, job_name, job_group, invoke_target, cron_expression, misfire_policy, concurrent, status, create_by, create_time, update_by, update_time, remark  
+        select job_id, job_name, job_group, invoke_target, cron_expression, time_zone, misfire_policy, concurrent, status, create_by, create_time, update_by, update_time, remark
 		from sys_job
     </sql>
 	
@@ -70,6 +71,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
  			<if test="jobGroup != null and jobGroup != ''">job_group = #{jobGroup},</if>
  			<if test="invokeTarget != null and invokeTarget != ''">invoke_target = #{invokeTarget},</if>
  			<if test="cronExpression != null and cronExpression != ''">cron_expression = #{cronExpression},</if>
+			<if test="timeZone != null and timeZone != ''">time_zone = #{timeZone},</if>
  			<if test="misfirePolicy != null and misfirePolicy != ''">misfire_policy = #{misfirePolicy},</if>
  			<if test="concurrent != null and concurrent != ''">concurrent = #{concurrent},</if>
  			<if test="status !=null">status = #{status},</if>
@@ -87,6 +89,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
  			<if test="jobGroup != null and jobGroup != ''">job_group,</if>
  			<if test="invokeTarget != null and invokeTarget != ''">invoke_target,</if>
  			<if test="cronExpression != null and cronExpression != ''">cron_expression,</if>
+			<if test="timeZone != null and timeZone != ''">time_zone,</if>
  			<if test="misfirePolicy != null and misfirePolicy != ''">misfire_policy,</if>
  			<if test="concurrent != null and concurrent != ''">concurrent,</if>
  			<if test="status != null and status != ''">status,</if>
@@ -99,6 +102,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
  			<if test="jobGroup != null and jobGroup != ''">#{jobGroup},</if>
  			<if test="invokeTarget != null and invokeTarget != ''">#{invokeTarget},</if>
  			<if test="cronExpression != null and cronExpression != ''">#{cronExpression},</if>
+			<if test="timeZone != null and timeZone != ''">#{timeZone},</if>
  			<if test="misfirePolicy != null and misfirePolicy != ''">#{misfirePolicy},</if>
  			<if test="concurrent != null and concurrent != ''">#{concurrent},</if>
  			<if test="status != null and status != ''">#{status},</if>
@@ -108,4 +112,4 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
  		)
 	</insert>
 
-</mapper> 
+</mapper>

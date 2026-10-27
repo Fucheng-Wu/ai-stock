@@ -1,5 +1,10 @@
 # orange 工作台生产部署
 
+全市场选股子代理及输入框新版的已有站点升级步骤，见仓库
+`docs/deploy-stock-screener.md`。首次迁移打包增加 `-IncludeStockHistory`，携带全量SQLite与筛选证据，
+导入MySQL并登记北京时间16点采集、17点筛选两个若依任务；先执行数据库迁移再启动新版Java。
+模型和数据库密钥仍保留服务器原配置。
+
 本目录的模板基于旧版 `ai-stock-deploy-v0.0.7`，部署路径统一为
 `/home/wufc/ai-stock`。新版本增加了 Pi Agent Gateway、MySQL 会话持久化、独立
 systemd 服务以及 `/agent-ws` WebSocket 反向代理。
@@ -22,6 +27,10 @@ ai-stock-deploy-v0.0.8.zip
 部署包包含 Java JAR、Vue `dist`、Agent Gateway 源码与 pnpm 锁文件、生产配置模板、
 SQL、Nginx 配置和两个 systemd 服务。Agent Gateway 在服务器安装依赖，因此不要从
 Windows 复制 `node_modules`。
+
+`-SkipBuild` 只在已完成并验证过 Maven 与 Vue 生产构建时使用；
+`-IncludeStockHistory` 包含一致的完整历史SQLite备份、最新离线结果与一次性迁移工具。
+`-IncludeStockScreen` 只包含离线结果备份；正式选股查询已使用Java API读取MySQL。
 
 ## 二、服务器环境
 
@@ -171,7 +180,7 @@ ss -lntp | grep -E ':80|:3000|:8080'
 
 ## 安全注意
 
-Agent Gateway 能调用文件和终端工具，必须保持 `HOST=127.0.0.1`，不得直接向公网开放
-3000 端口。当前菜单权限并不等于 WebSocket 鉴权；公网部署时还应在 Nginx、VPN、
-Cloudflare Access 或其他统一认证层限制 `/agent-ws`。`PI_WORKSPACE_DIR` 默认使用独立
-的 `/home/wufc/ai-stock/workspace`，避免 Agent 直接修改生产程序文件。
+Agent Gateway 保持 `HOST=127.0.0.1`，公网通过现有 Nginx WebSocket 代理访问。
+当前普通 Agent 与三个子代理只拥有精确白名单内的业务能力，不开放文件、终端或MCP。
+WebSocket 使用若依登录身份校验和用户隔离；选股工具另外校验股票分析权限。
+`PI_WORKSPACE_DIR` 可以使用独立的 `/home/wufc/ai-stock/workspace`，不会扩大工具权限。

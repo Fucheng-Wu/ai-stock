@@ -32,6 +32,7 @@ import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.IStockAnalyzerService;
 import com.ruoyi.system.service.support.StockConfigKeys;
 import com.ruoyi.system.service.support.StockCodeUtils;
+import com.ruoyi.system.service.support.StockMovingAverage;
 
 @Service
 public class StockAnalyzerServiceImpl implements IStockAnalyzerService
@@ -412,24 +413,7 @@ public class StockAnalyzerServiceImpl implements IStockAnalyzerService
 
     private List<Double> calcMA(List<Double> closes, int period)
     {
-        List<Double> result = new ArrayList<>();
-        for (int i = 0; i < closes.size(); i++)
-        {
-            if (i < period - 1)
-            {
-                result.add(null);
-            }
-            else
-            {
-                double sum = 0;
-                for (int j = i - period + 1; j <= i; j++)
-                {
-                    sum += closes.get(j);
-                }
-                result.add(Math.round(sum / period * 100.0) / 100.0);
-            }
-        }
-        return result;
+        return StockMovingAverage.calculate(closes, period);
     }
 
     List<StockKlineData> buildKlineChartData(List<JSONObject> bars)

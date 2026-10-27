@@ -50,9 +50,15 @@ public class CronUtils
      */
     public static Date getNextExecution(String cronExpression)
     {
+        return getNextExecution(cronExpression, null);
+    }
+
+    public static Date getNextExecution(String cronExpression, String timeZone)
+    {
         try
         {
             CronExpression cron = new CronExpression(cronExpression);
+            if (timeZone != null && !timeZone.isBlank()) cron.setTimeZone(java.util.TimeZone.getTimeZone(java.time.ZoneId.of(timeZone)));
             return cron.getNextValidTimeAfter(new Date(System.currentTimeMillis()));
         }
         catch (ParseException e)

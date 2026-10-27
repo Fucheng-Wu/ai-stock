@@ -42,6 +42,13 @@ public class SysJob extends BaseEntity
     @Excel(name = "执行表达式 ")
     private String cronExpression;
 
+    /** Optional timezone; null preserves the scheduler's existing default. */
+    private String timeZone;
+
+    @Size(max = 64, message = "时区名称不能超过64个字符")
+    public String getTimeZone() { return timeZone; }
+    public void setTimeZone(String timeZone) { this.timeZone = timeZone; }
+
     /** cron计划策略 */
     @Excel(name = "计划策略 ", readConverterExp = "0=默认,1=立即触发执行,2=触发一次执行,3=不触发立即执行")
     private String misfirePolicy = ScheduleConstants.MISFIRE_DEFAULT;
@@ -115,7 +122,7 @@ public class SysJob extends BaseEntity
     {
         if (StringUtils.isNotEmpty(cronExpression))
         {
-            return CronUtils.getNextExecution(cronExpression);
+            return CronUtils.getNextExecution(cronExpression, timeZone);
         }
         return null;
     }

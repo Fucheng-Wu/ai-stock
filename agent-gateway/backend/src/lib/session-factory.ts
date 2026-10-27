@@ -34,7 +34,8 @@ async function buildSession(resources: SharedResources, manager: SessionManager,
     cwd: resources.cwd, agentDir: resources.agentDir, sessionManager: manager,
     modelRuntime: resources.modelRuntime, settingsManager: resources.settingsManager,
     resourceLoader, tools: [...PRIMARY_TOOLS], ...(model ? { model } : {}),
-    ...(emptySessionSettings ? { thinkingLevel: emptySessionSettings.thinkingLevel as ThinkingLevel } : {}),
+    ...(useDefaultModel ? { thinkingLevel: "low" as const }
+      : emptySessionSettings ? { thinkingLevel: emptySessionSettings.thinkingLevel as ThinkingLevel } : {}),
   });
   try {
     await session.bindExtensions({});

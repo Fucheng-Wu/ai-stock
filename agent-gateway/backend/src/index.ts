@@ -239,7 +239,7 @@ function lastPromptError(active: ActiveSession): string | undefined {
 
 function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string, images?: ImageAttachment[]): void {
   if (active.promptTask || active.operationTask || !active.session.isIdle) throw new Error("此会话正在工作，请等待或先取消");
-  if (images?.length && !active.session.model?.input.includes("image")) throw new Error("当前模型不支持图片，请切换到支持图像输入的模型");
+  if (images?.length && !active.session.model?.input.includes("image")) throw new Error("当前模型未启用图像输入，暂时无法发送图片。");
   active.role.controller = new AbortController();
   active.startedAt = new Date().toISOString();
   active.phase = "waiting";

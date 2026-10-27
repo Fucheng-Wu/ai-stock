@@ -218,7 +218,7 @@ test('image-only send, rejection, retry and resized image confirmation preserve 
   instance.clearPendingRequests()
 })
 
-test('non-vision models block image sends and model changes wait for acknowledgement', () => {
+test('non-vision models block image sends and capability updates do not switch the selected model', () => {
   const { instance, state } = createChatState()
   instance.connectionState = 'connected'
   state.model = { provider: 'test', id: 'text' }
@@ -227,13 +227,11 @@ test('non-vision models block image sends and model changes wait for acknowledge
   const sent = []
   instance.sendSocket = message => { sent.push(message); instance.trackRequest(message); return true }
   assert.equal(instance.canSubmit, false)
-  assert.match(instance.imageModelError, /不支持图片/)
-  instance.setComposerModel(JSON.stringify(['test', 'vision']))
-  assert.equal(state.settingsPending, true)
-  assert.equal(instance.canSubmit, false)
-  instance.handleServerMessage({ type: 'session_updated', sessionId: 'session', model: { provider: 'test', id: 'vision' } })
-  instance.handleServerMessage({ type: 'ack', command: 'set_model', requestId: sent[0].requestId })
+  assert.match(instance.imageModelError, /图像输入/)
+  instance.handleServerMessage({ type: 'models', models: [{ provider: 'test', id: 'text', supportsImages: true }] })
+  assert.deepEqual(state.model, { provider: 'test', id: 'text' })
   assert.equal(instance.canSubmit, true)
+  assert.equal(sent.length, 0)
   instance.clearPendingRequests()
 })
 
@@ -253,29 +251,27 @@ test('new image conversations preserve attachments on creation failure and unsup
   instance.handleServerMessage({ type: 'session_created', requestId: sent[1].requestId, session: { summary: { id: 'new' }, messages: [], model: { provider: 'test', id: 'text-only' }, isStreaming: false } })
   assert.deepEqual(instance.inputImages, [image])
   assert.deepEqual(instance.pendingImages, [])
-  assert.match(instance.imageError, /不支持图片/)
+  assert.match(instance.imageError, /图像输入/)
   assert.equal(sent.some(message => message.type === 'prompt'), false)
   instance.clearPendingRequests()
 })
 
-test('choosing a vision model in a new conversation moves the draft and waits for the model change', () => {
+test('new image conversations use the server default and send without model or thinking changes', () => {
   const { instance } = createChatState()
   instance.activeSessionId = null
   instance.connectionState = 'connected'
   instance.inputText = '分析这张图'
   instance.inputImages = [{ data: 'aGVsbG8=', mimeType: 'image/png' }]
-  instance.models = [{ provider: 'test', id: 'vision', supportsImages: true }]
+  instance.models = [{ provider: 'deepseek', id: 'deepseek-flash', supportsImages: true }]
   const sent = []
   instance.sendSocket = message => { sent.push(message); instance.trackRequest(message); return true }
-  instance.setComposerModel(JSON.stringify(['test', 'vision']))
-  instance.handleServerMessage({ type: 'session_created', requestId: sent[0].requestId, session: { summary: { id: 'new' }, messages: [], model: { provider: 'test', id: 'text-only' }, isStreaming: false } })
-  assert.equal(instance.inputText, '分析这张图')
-  assert.equal(instance.inputImages.length, 1)
-  assert.equal(sent[1].type, 'set_model')
-  assert.equal(instance.canSubmit, false)
-  instance.handleServerMessage({ type: 'session_updated', sessionId: 'new', model: { provider: 'test', id: 'vision' } })
-  instance.handleServerMessage({ type: 'ack', requestId: sent[1].requestId, command: 'set_model' })
-  assert.equal(instance.canSubmit, true)
+  instance.submitPrompt()
+  instance.handleServerMessage({ type: 'session_created', requestId: sent[0].requestId, session: { summary: { id: 'new' }, messages: [], model: { provider: 'deepseek', id: 'deepseek-flash' }, thinkingLevel: 'low', isStreaming: false } })
+  assert.deepEqual(sent.map(message => message.type), ['create_session', 'prompt'])
+  assert.equal(sent[1].text, '分析这张图')
+  assert.equal(sent[1].images.length, 1)
+  assert.equal(instance.activeState.model.id, 'deepseek-flash')
+  assert.equal(instance.activeState.thinkingLevel, 'low')
   instance.clearPendingRequests()
 })
 

@@ -1,12 +1,20 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { defineTool, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { authenticateWorkbench } from "../../src/lib/workbench-auth.js";
 
 // 按 prompt 的异步调用链隔离身份，不能放到共享资源或持久化的模型上下文中。
 const stockToolIdentity = new AsyncLocalStorage<{ token?: string }>();
 
 export function runWithStockToolToken<T>(token: string | undefined, run: () => T): T {
   return stockToolIdentity.run({ token }, run);
+}
+
+/** Local screening results still require a live, authorized workbench identity. */
+export async function authorizeStockScreen(signal?: AbortSignal): Promise<void> {
+  const token = stockToolIdentity.getStore()?.token;
+  if (!token) throw new Error("股票工具需要工作台登录身份，请登录工作台后重新发送消息。");
+  await authenticateWorkbench(token, { signal, requiredPermission: "stock:analyzer:analyze" });
 }
 
 function normalizeStockCode(value: string): string {
@@ -30,7 +38,7 @@ interface StockSearchMatch {
   exactMatch: boolean;
 }
 
-async function requestStockApi(path: string, signal?: AbortSignal, body?: Record<string, string>): Promise<unknown> {
+export async function requestStockApi(path: string, signal?: AbortSignal, body?: Record<string, string>): Promise<unknown> {
   const token = stockToolIdentity.getStore()?.token;
   if (!token) throw new Error("股票工具需要工作台登录身份，请登录工作台后重新发送消息。");
   const baseUrl = new URL(process.env.STOCK_API_BASE_URL || "http://127.0.0.1:8080");
