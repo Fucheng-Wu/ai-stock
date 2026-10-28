@@ -67,7 +67,8 @@ export async function authenticateWorkbench(token: unknown, options: { signal?: 
   }
   const canManage = result.permissions.some((permission) => permission === "*:*:*" || permission === "agent:chat:manage");
   if (options.requiredPermission && !result.permissions.some((permission) => permission === "*:*:*" || permission === options.requiredPermission)) {
-    throw new WorkbenchAuthError(`当前账号没有股票分析权限（${options.requiredPermission}）。`, "FORBIDDEN");
+    const label = options.requiredPermission === "stock:analyzer:analyze" ? "股票分析" : "此操作";
+    throw new WorkbenchAuthError(`当前账号没有${label}权限（${options.requiredPermission}）。`, "FORBIDDEN");
   }
   return { userId: String(id), token, canManage, authorizedUntil: Date.now() + 60_000 };
 }

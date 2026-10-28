@@ -1445,9 +1445,11 @@ export default {
       const labels = {
         read: '读取文件', write: '写入文件', edit: '编辑文件', bash: '运行命令',
         grep: '搜索内容', find: '查找文件', ls: '浏览目录', web_search: '搜索网络',
-        web_fetch: '读取网页', subagent: '调用子 Agent', Agent: '股票分析子 Agent',
+        web_fetch: '读取网页', subagent: '调用子 Agent', Agent: '调用子 Agent',
         stock_search: '检索股票名称', stock_quote: '查询股票行情',
-        stock_kline: '查询日 K 线', stock_analyze: '520 战法分析'
+        stock_kline: '查询日 K 线', stock_analyze: '520 战法分析',
+        stock_watchlist_add: '添加自选股票', stock_position_add: '添加持仓记录', todo_add: '添加待办',
+        stock_watchlist_list: '查看我的自选', stock_position_list: '查看我的持仓', todo_list: '查看待办清单'
       }
       return labels[name] || name || '调用工具'
     },

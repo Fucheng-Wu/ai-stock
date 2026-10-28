@@ -37,7 +37,7 @@ sql/agent_chat.sql
 ```
 
 也可以使用 `bin\start-agent-gateway.cmd`。启动脚本默认把 `PI_WORKSPACE_DIR` 设置为
-当前 `ai-stock` 仓库根目录，作为会话工作目录标识。普通 Agent 与三个子代理均不开放
+当前 `ai-stock` 仓库根目录，作为会话工作目录标识。普通 Agent 与五个子代理均不开放
 文件和终端工具；改动工作目录不会扩大工具权限。需要改为其他目录时，可在启动前
 显式设置该环境变量。
 
@@ -184,16 +184,18 @@ MCP 配置必须另外具备 `agent:chat:manage`，在每个 WebSocket 命令执
 ## 股票分析、信息检索与专属技能
 
 主 Agent 固定为“普通 Agent”（`general`），唯一工具为 `Agent`，且只能调用
-`stock-analyst` 股票分析、`web-researcher` 信息检索或 `stock-screener` 全市场选股子代理。
-具体标的行情与分析交给股票分析角色，公开资料交给信息检索角色，全市场520候选和快照证据交给选股角色；其他问题可以正常文字对话。
+`stock-analyst` 股票分析、`web-researcher` 信息检索、`stock-screener` 全市场选股、`stock-portfolio` 股票记录或 `todo-recorder` 待办记录子代理。
+具体标的行情与分析交给股票分析角色，公开资料交给信息检索角色，全市场520候选和快照证据交给选股角色，查看或新增自选、持仓交给股票记录角色，查看或新增待办交给待办记录角色；其他问题可以正常文字对话。
 旧会话、JSONL 和 MySQL 备份恢复的会话也使用同一角色，不能切换到上游 Build/Plan
 或通过自定义角色放开权限。
 
-股票子代理内置以下只读业务工具，复用 Java 股票分析服务：
+各子代理按职责注册以下固定业务工具，复用 Java 业务服务：
 
 工具代码位于 `agent-gateway/backend/subagents/stock-analyst/tools.ts`；联网搜索代码位于
 `agent-gateway/backend/subagents/web-researcher/web-search.ts`；选股工具位于
-`agent-gateway/backend/subagents/stock-screener/tools.ts`。网关通过固定导入按角色挂载工具，部署时需要包含三个子代理目录。
+`agent-gateway/backend/subagents/stock-screener/tools.ts`；股票记录位于
+`agent-gateway/backend/subagents/stock-portfolio/tools.ts`；待办记录位于
+`agent-gateway/backend/subagents/todo-recorder/tools.ts`。网关通过固定导入按角色挂载工具，部署时需要包含五个子代理目录。
 
 | 工具 | 用途 | 后端接口 |
 | --- | --- | --- |
@@ -203,6 +205,12 @@ MCP 配置必须另外具备 `agent:chat:manage`，在每个 WebSocket 命令执
 | `stock_analyze` | 行情、指标、520结构化规则报告，不重复调用DeepSeek | `POST /stock/analyzer/analyze`，`includeAi=false` |
 | `stock_screen` | 查询全市场520候选，按买点/交易所/ST/名称筛选及分页 | 调用 `/stock/screener/results` 读取MySQL，沿用登录与股票权限 |
 | `stock_screen_detail` | 同一快照的逐只完整证据，包括未命中和排除原因 | 调用 `/stock/screener/detail` 读取MySQL，沿用登录与股票权限 |
+| `stock_watchlist_add` | 用户明确指定的股票加入当前用户自选 | `POST /stock/watchlist`，校验 `stock:watchlist:add` |
+| `stock_position_add` | 按用户提供的成本价、股数新增持仓记录 | `POST /stock/position`，校验 `stock:position:add` |
+| `stock_watchlist_list` | 分页查看当前用户自选，按名称或代码筛选 | `GET /stock/watchlist/list`，校验 `stock:watchlist:list` |
+| `stock_position_list` | 分页查看当前用户持仓成本价和股数 | `GET /stock/position/list`，校验 `stock:position:list` |
+| `todo_list` | 分页查看当前用户待办，按内容、分类和完成状态筛选 | `GET /todo/task/list`，校验 `todo:task:list` |
+| `todo_add` | 将用户明确要求记录的事项加入个人待办清单 | `POST /todo/task`，校验 `todo:task:add` |
 
 配置 `agent-gateway/.env`（生产环境为 `config/agent-gateway.env`）：
 
@@ -215,12 +223,21 @@ STOCK_API_BASE_URL=http://127.0.0.1:8080
 
 页面在 `init` 握手时附带当前登录令牌 `accessToken`。网关校验身份后，在本轮异步工具调用中
 将连接令牌作为 `Authorization: Bearer ...` 透传，不加入模型提示、工具参数、工具结果或会话存储。
-Java 接口继续校验 `stock:analyzer:analyze` 权限。不配置静态管理员 Token；旧客户端必须
+Java 行情、搜索和分析接口继续校验 `stock:analyzer:analyze` 权限。记录子代理新增前重新校验 `agent:chat:use` 和目标新增权限，Java 接口继续校验对应权限，并按登录用户保存。不配置静态管理员 Token；旧客户端必须
 更新以支持登录握手。生产环境的浏览器连接应使用 HTTPS/WSS。
 
 `backend/skills/stock-520/SKILL.md` 的正文由网关直接注入股票子代理，组织“趋势 → 买点 → 执行与仓位”
 分析流程，调用 `stock_analyze` 取得规则和证据，由股票子代理进行解读。规则数值和判定
-仍以 Java 引擎为准，Skill 不复制实现一套计算逻辑。首批不包含自选、持仓查询或修改操作。
+仍以 Java 引擎为准，Skill 不复制实现一套计算逻辑。股票分析角色不包含自选、持仓查询或修改操作。
+
+`stock-portfolio` 仅注册名称搜索、两个新增工具和两个列表查询工具，不加载分析/检索技能，也没有修改、删除或证券下单能力。
+用户可说“把贵州茅台加入自选”或“记录平安银行持仓，成本12.30元，250股”。名称只在唯一精确匹配时自动使用，否则询问候选；持仓缺成本价或股数时询问，不用现价或默认值代替。
+成本价按现有表结构最多两位小数，数量为正整数股数。重复记录返回业务错误，不覆盖或合并持仓；新增请求超时、网络中断或响应异常时提示先到菜单核实，不自动重复提交。
+发布此功能需包含 `stock-portfolio` 目录并重启网关，前端更新工具显示名称；复用原股票表和菜单新增权限，无需新增SQL或环境变量。
+
+`todo-recorder` 仅注册 `todo_add`、`todo_list`，新增前重新校验 `agent:chat:use` 和 `todo:task:add`，不依赖股票权限、待办列表权限或 Agent 管理权限。
+例如“添加待办：买牛奶，生活类”；内容最多500字符，分类只支持工作/学习/生活，优先用户指定，未指定按内容归类、无法判断默认工作。新建状态为未完成，支持查询，不修改、删除或设置提醒，日期用语仅作为内容保存。接口允许相同内容，不提供查重承诺；结果未知先请用户到个人待办清单核实，不自动重试。
+共用 `src/lib/workbench-api.ts` 的本轮身份和 Java 请求封装，仍使用 `STOCK_API_BASE_URL`。部署包含 `todo-recorder` 目录及新共享文件，更新前端并重启网关后生效；复用现有待办表和菜单权限，无需迁移SQL或新增环境变量。切回待办页面会自动刷新列表。
 
 `backend/skills/web-research/SKILL.md` 仅注入信息检索子代理，指导其使用唯一工具 `web_search`
 检索各领域公开信息、区分事件日期和查询时间、提供来源链接。股票子代理不再注册联网工具。
@@ -238,8 +255,8 @@ TAVILY_API_KEY=填写Tavily密钥
 两层代理均禁止 `read`、`grep`、`find`、`ls`、`write`、`edit`、`bash`、执行代码等内部
 工具，并关闭全局扩展、MCP、项目上下文和提示模板的自动加载。工具权限由后端精确
 白名单限制，不能通过修改角色文件或页面设置扩大。股票技能已加载在系统提示中，无需
-也不能让代理读取文件。主 Agent 不直接调用股票、选股或搜索工具，三个子代理不能相互或递归委派。
-管理页分别控制三个角色的启停，运行时配置文件仍为 `backend/subagents/settings.json`。
+也不能让代理读取文件。主 Agent 不直接调用股票、选股、搜索或记录工具，五个子代理不能相互或递归委派。
+管理页分别控制五个角色的启停，运行时配置文件仍为 `backend/subagents/settings.json`。
 
 全市场选股通过 `STOCK_API_BASE_URL` 调用 Java 鉴权接口读取 MySQL，接口失败不回退到本地文件。
 若依每天北京时间16点采集全市场双口径日线、17点筛选并保存完整规则证据，休市或采集失败不发布当日结果。
@@ -336,3 +353,13 @@ ECharts option，例如：
 nginx 的同源 `/agent-ws` 提供 HTTPS/WSS 连接，不直接把 3000 端口开放到公网。
 菜单 SQL 默认只把页面授权给角色 1 和 4。
 
+
+### 查看个人清单
+
+用户可以直接说“查看我的自选”“列出我的持仓及成本和股数”“我还有哪些未完成待办”“查看学习类已完成事项”。主代理分别委派股票记录或待办记录角色，不要求新增字段，不使用聊天记忆猜测清单。
+
+三个列表工具逐次校验 `agent:chat:use` 与对应列表权限，不要求新增、股票分析或 Agent 管理权限。Java 从登录身份获取用户ID；工具不接受用户ID、URL或Token，只向模型返回展示字段，去掉内部用户及审计信息。查询仅调用现有只读接口，不变更数据库。
+
+默认每页20条、最多100条，返回匹配总数、页码及 `hasMore`；用户要求全部时继续分页。待办默认全部分类及状态，`status=0` 未完成、`status=1` 已完成。接口失败和无权限不能展示为空清单，超出页码为空也不能声称无记录。持仓列表是保存的成本和股数，不代表实时市值或盈亏。
+
+更新前端与网关源码、角色目录并重启网关生效，无需迁移SQL或新增环境变量。

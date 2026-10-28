@@ -1,33 +1,18 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { defineTool, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { authenticateWorkbench } from "../../src/lib/workbench-auth.js";
-
-// 按 prompt 的异步调用链隔离身份，不能放到共享资源或持久化的模型上下文中。
-const stockToolIdentity = new AsyncLocalStorage<{ token?: string }>();
-
-export function runWithStockToolToken<T>(token: string | undefined, run: () => T): T {
-  return stockToolIdentity.run({ token }, run);
-}
+import { authorizeWorkbenchTool, requestWorkbenchApi } from "../../src/lib/workbench-api.js";
+export { runWithWorkbenchToolToken as runWithStockToolToken, authorizeWorkbenchTool as authorizeStockPermission } from "../../src/lib/workbench-api.js";
 
 /** Local screening results still require a live, authorized workbench identity. */
 export async function authorizeStockScreen(signal?: AbortSignal): Promise<void> {
-  const token = stockToolIdentity.getStore()?.token;
-  if (!token) throw new Error("股票工具需要工作台登录身份，请登录工作台后重新发送消息。");
-  await authenticateWorkbench(token, { signal, requiredPermission: "stock:analyzer:analyze" });
+  await authorizeWorkbenchTool("stock:analyzer:analyze", signal);
 }
 
-function normalizeStockCode(value: string): string {
+export function normalizeStockCode(value: string): string {
   const code = value.trim().toLowerCase();
   if (/^(sh|sz)\d{6}$/.test(code)) return code;
   if (/^[01356]\d{5}$/.test(code)) return `${/^[56]/.test(code) ? "sh" : "sz"}${code}`;
   throw new Error("仅支持沪深 A 股和场内 ETF，请提供六位代码或 sh/sz 前缀代码；指数请明确市场，例如 sh000001。");
-}
-
-interface StockResponse {
-  code: number;
-  msg?: string;
-  data?: unknown;
 }
 
 interface StockSearchMatch {
@@ -38,44 +23,15 @@ interface StockSearchMatch {
   exactMatch: boolean;
 }
 
-export async function requestStockApi(path: string, signal?: AbortSignal, body?: Record<string, string>): Promise<unknown> {
-  const token = stockToolIdentity.getStore()?.token;
-  if (!token) throw new Error("股票工具需要工作台登录身份，请登录工作台后重新发送消息。");
-  const baseUrl = new URL(process.env.STOCK_API_BASE_URL || "http://127.0.0.1:8080");
-  if (!["http:", "https:"].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
-    throw new Error("STOCK_API_BASE_URL 必须是无账号、查询参数或片段的 HTTP(S) 后端地址。");
-  }
-  // 保留可选 context-path；模型只能选择代码和条数，不能指定地址或认证信息。
-  const url = `${baseUrl.toString().replace(/\/$/, "")}${path}`;
-  const timeout = AbortSignal.timeout(150_000);
-  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: body ? "POST" : "GET",
-      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-      redirect: "error",
-      signal: requestSignal,
-    });
-  } catch {
-    if (signal?.aborted) throw new Error("股票查询已取消。");
-    if (timeout.aborted) throw new Error("股票查询超时，请稍后重试。");
-    throw new Error("无法连接股票服务，请检查 STOCK_API_BASE_URL 和若依后端运行状态。");
-  }
-  if (response.status === 401) throw new Error("工作台登录已失效，请重新登录后发送消息。");
-  if (response.status === 403) throw new Error("当前账号没有股票分析权限（stock:analyzer:analyze）。");
-  if (!response.ok) throw new Error(`股票服务请求失败（HTTP ${response.status}）。`);
-  let result: StockResponse;
-  try { result = await response.json() as StockResponse; }
-  catch { throw new Error("股票服务未返回有效 JSON，请检查后端地址是否指向若依 API。"); }
-  if (!result || result.code !== 200) {
-    if (result?.code === 401) throw new Error("工作台登录已失效，请重新登录后发送消息。");
-    if (result?.code === 403) throw new Error("当前账号没有股票分析权限（stock:analyzer:analyze）。");
-    throw new Error(result?.msg || "股票服务返回错误。");
-  }
-  if (result.data == null) throw new Error("股票服务未返回数据，不能据此作出分析结论。");
-  return result.data;
+export async function requestStockApi(
+  path: string, signal?: AbortSignal, body?: Record<string, unknown>,
+  options: { requiredPermission?: string; mutation?: boolean } = {},
+): Promise<unknown> {
+  return requestWorkbenchApi(path, signal, body, {
+    requiredPermission: options.requiredPermission || "stock:analyzer:analyze",
+    permissionName: options.requiredPermission ? "此操作" : "股票分析",
+    serviceName: "股票", verificationTarget: "股票管理菜单", mutation: options.mutation,
+  });
 }
 
 function toolResult(stockCode: string, source: string, data: unknown) {
@@ -88,7 +44,7 @@ function toolResult(stockCode: string, source: string, data: unknown) {
 
 const stockCodeParameter = Type.String({ minLength: 6, maxLength: 8, description: "沪深股票/ETF代码，例如600519、sz000001；指数必须带市场前缀，例如sh000001。只有名称时先调用stock_search，不能猜测代码。" });
 
-export function createStockToolsExtension(): ExtensionFactory {
+export function createStockToolsExtension(searchOnly = false): ExtensionFactory {
   return (pi) => {
     pi.registerTool(defineTool({
       name: "stock_search",
@@ -121,6 +77,7 @@ export function createStockToolsExtension(): ExtensionFactory {
         };
       },
     }));
+    if (searchOnly) return;
     pi.registerTool(defineTool({
       name: "stock_quote",
       label: "股票实时行情",

@@ -184,7 +184,7 @@ export function createPermissionExtension(
       const allowed = child ? SUBAGENT_POLICIES.find(policy => policy.id === child.id)?.tools.includes(event.toolName) : PRIMARY_TOOLS.includes(event.toolName);
       if (!allowed) return { block: true, reason: "工作台禁止内部查询、文件、终端及未授权工具调用" };
       if (!child && event.toolName === "Agent" && !SUBAGENT_POLICIES.some(policy => policy.id === event.input.profile)) {
-        return { block: true, reason: "普通 Agent 只能调用股票分析、信息检索或全市场选股子代理" };
+        return { block: true, reason: "普通 Agent 只能调用股票分析、信息检索、全市场选股、股票记录或待办记录子代理" };
       }
       if (!child && !runtime.profile.tools.some((pattern) => matches(pattern, event.toolName))) {
         return { block: true, reason: "主代理未获准调用此工具" };

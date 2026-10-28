@@ -59,7 +59,7 @@ if (-not $SkipBuild) {
     Write-Host 'Building RuoYi backend...'
     Push-Location $projectRoot
     try {
-        mvn clean package -Dmaven.test.skip=true
+        mvn clean package '-Dmaven.test.skip=true'
         if ($LASTEXITCODE -ne 0) { throw 'RuoYi backend build failed.' }
     } finally {
         Pop-Location

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { RESEARCH_TOOLS, SCREENER_TOOLS, STOCK_TOOLS } from "../src/lib/agent-policy.js";
+import { PORTFOLIO_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS, STOCK_TOOLS, TODO_TOOLS } from "../src/lib/agent-policy.js";
 import { writeScreenFixture } from "./helpers/stock-screen-fixture.js";
 import { StockScreenStore } from "../src/lib/stock-screen-store.js";
 import { createPermissionExtension, PermissionBroker, type RoleRuntime } from "../src/lib/permissions.js";
@@ -36,7 +36,7 @@ async function runtime(): Promise<RoleRuntime> {
   };
 }
 
-test("primary permits only the three predefined subagents, even when profile capabilities are widened", async () => {
+test("primary permits only the five predefined subagents, even when profile capabilities are widened", async () => {
   const role = await runtime();
   role.profile.tools = ["*"];
   role.profile.permissions = [{ action: "*", resource: "*", effect: "allow" }];
@@ -44,12 +44,56 @@ test("primary permits only the three predefined subagents, even when profile cap
   assert.equal(await call("Agent", { profile: "stock-analyst", task: "行情" }), undefined);
   assert.equal(await call("Agent", { profile: "web-researcher", task: "公开信息" }), undefined);
   assert.equal(await call("Agent", { profile: "stock-screener", task: "全市场选股" }), undefined);
-  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "mcp", "web_fetch", ...STOCK_TOOLS, ...RESEARCH_TOOLS, ...SCREENER_TOOLS]) {
+  assert.equal(await call("Agent", { profile: "stock-portfolio", task: "添加自选" }), undefined);
+  assert.equal(await call("Agent", { profile: "todo-recorder", task: "添加待办" }), undefined);
+  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "mcp", "web_fetch", ...STOCK_TOOLS, ...RESEARCH_TOOLS, ...SCREENER_TOOLS, ...PORTFOLIO_TOOLS, ...TODO_TOOLS]) {
     assert.equal((await call(tool, { path: "secret", query: "test" }))?.block, true, tool);
   }
-  for (const profile of ["general-purpose", "explore", "plan", "build", "stock-analyst ", "web-researcher ", "WEB-RESEARCHER", "stock-screener ", "STOCK-SCREENER"]) {
+  for (const profile of ["general-purpose", "explore", "plan", "build", "stock-analyst ", "web-researcher ", "WEB-RESEARCHER", "stock-screener ", "STOCK-SCREENER", "stock-portfolio ", "STOCK-PORTFOLIO", "todo-recorder ", "TODO-RECORDER"]) {
     assert.equal((await call("Agent", { profile, task: "read files" }))?.block, true, profile);
   }
+});
+
+test("todo child can list and add todos, and other children cannot use its business capability", async () => {
+  const role = await runtime();
+  const call = await guard(role, { id: "todo-recorder", name: "待办记录", tools: ["*"],
+    permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  assert.equal(await call("todo_add", { content: "买牛奶", category: "生活" }), undefined);
+  assert.equal(await call("todo_list", {}), undefined);
+  for (const tool of [...STOCK_TOOLS, ...PORTFOLIO_TOOLS, ...RESEARCH_TOOLS, ...SCREENER_TOOLS,
+    "todo_update", "todo_remove", "Agent", "read", "write", "bash", "web_fetch", "mcp"]) {
+    assert.equal((await call(tool))?.block, true, tool);
+  }
+  for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio"]) {
+    const other = await guard(role, { id, name: id, tools: ["*"], permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+    assert.equal((await other("todo_add"))?.block, true, id);
+    assert.equal((await other("todo_list"))?.block, true, id);
+  }
+  role.profile.permissions.push({ action: "todo_add", resource: "*", effect: "deny" });
+  assert.equal((await call("todo_add"))?.block, true);
+  const cancelled = await runtime();
+  const cancelledCall = await guard(cancelled, { id: "todo-recorder", name: "待办记录", tools: ["todo_add"] });
+  cancelled.controller.abort();
+  assert.equal((await cancelledCall("todo_add"))?.block, true);
+});
+
+test("portfolio writes are isolated to the portfolio child and capped by parent permissions", async () => {
+  const role = await runtime();
+  const call = await guard(role, { id: "stock-portfolio", name: "股票记录", tools: ["*"],
+    permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  for (const tool of PORTFOLIO_TOOLS) assert.equal(await call(tool), undefined);
+  for (const tool of [...STOCK_TOOLS.filter(name => name !== "stock_search"), ...RESEARCH_TOOLS, ...SCREENER_TOOLS,
+    "Agent", "read", "write", "edit", "bash", "web_fetch", "mcp", "stock_position_update", "stock_watchlist_remove"]) {
+    assert.equal((await call(tool))?.block, true, tool);
+  }
+  for (const id of ["stock-analyst", "web-researcher", "stock-screener"]) {
+    const other = await guard(role, { id, name: id, tools: ["*"], permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+    for (const tool of ["stock_watchlist_add", "stock_position_add", "stock_watchlist_list", "stock_position_list"]) assert.equal((await other(tool))?.block, true);
+  }
+  role.profile.permissions.push({ action: "stock_position_add", resource: "*", effect: "deny" });
+  assert.equal((await call("stock_position_add"))?.block, true);
+  role.controller.abort();
+  assert.equal((await call("stock_watchlist_add"))?.block, true);
 });
 
 test("stock child permits only business tools and blocks web search and recursive delegation", async () => {
@@ -125,11 +169,59 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
   const token = "test-user-token-should-never-reach-model";
   const image = { type: "image" as const, mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGO0afrAQApgIkk1w6gG4gATkergYFQDMYDkUAIAVSsBzrxEmLQAAAAASUVORK5CYII=" };
   let stockRequests = 0;
+  let portfolioRequests = 0;
+  let todoRequests = 0;
+  let requestedQuery: "stock_watchlist_list" | "stock_position_list" | "todo_list" | undefined;
+  let personalListRequests = 0;
+  const personalLists: Record<string, unknown[]> = {
+    "/stock/watchlist/list": [{ watchlistId: 1, stockCode: "sh600519", stockName: "贵州茅台", userId: 1 }],
+    "/stock/position/list": [{ positionId: 1, stockCode: "sz000001", stockName: "平安银行", costPrice: "12.30", quantity: 250, userId: 1 }],
+    "/todo/task/list": [{ taskId: 1, content: "阅读Java并发文章", category: "学习", status: "0", userId: 1 }],
+  };
+  const personalAnswers = {
+    stock_watchlist_list: "我的自选：贵州茅台 sh600519。",
+    stock_position_list: "我的持仓：平安银行 sz000001，成本12.30元，250股。",
+    todo_list: "我的待办：阅读Java并发文章，学习类，未完成。",
+  };
   const stockServer = createServer(async (request, response) => {
     if (request.url === "/getInfo") {
       assert.equal(request.headers.authorization, `Bearer ${token}`);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ code: 200, user: { userId: 1 }, permissions: ["agent:chat:use", "stock:analyzer:analyze"] }));
+      const permissions = requestedQuery ? ["agent:chat:use", requestedQuery === "todo_list" ? "todo:task:list"
+        : requestedQuery === "stock_watchlist_list" ? "stock:watchlist:list" : "stock:position:list"]
+        : requestedProfile === "todo-recorder" ? ["agent:chat:use", "todo:task:add"]
+        : ["agent:chat:use", "stock:analyzer:analyze", "stock:watchlist:add", "stock:position:add"];
+      response.end(JSON.stringify({ code: 200, user: { userId: 1 }, permissions }));
+      return;
+    }
+    if (request.url && Object.hasOwn(personalLists, request.url)) {
+      assert.equal(request.method, "GET");
+      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      personalListRequests++;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ code: 200, data: personalLists[request.url] }));
+      return;
+    }
+    if (request.url === "/stock/watchlist") {
+      assert.equal(request.method, "POST");
+      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { stockCode: "sh600519" });
+      portfolioRequests++;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ code: 200, msg: "操作成功" }));
+      return;
+    }
+    if (request.url === "/todo/task") {
+      assert.equal(request.method, "POST");
+      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { content: "买牛奶", category: "生活" });
+      todoRequests++;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ code: 200, msg: "操作成功" }));
       return;
     }
     if (request.url?.startsWith("/stock/screener/")) {
@@ -158,15 +250,18 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     const primary = toolNames.includes("Agent");
     const research = toolNames.includes("web_search");
     const screening = toolNames.includes("stock_screen");
+    const portfolio = toolNames.includes("stock_watchlist_add");
+    const todo = toolNames.includes("todo_add");
     if (!primary && childFails) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { message: "child model unavailable", type: "invalid_request_error" } }));
       return;
     }
     const afterTool = body.messages.at(-1)?.role === "tool";
-    const tool = primary ? "Agent" : research ? "web_search" : screening ? "stock_screen" : "stock_quote";
-    const args = primary ? { profile: requestedProfile, task: requestedProfile === "web-researcher" ? "检索公开技术资料并注明来源" : requestedProfile === "stock-screener" ? "筛选符合520买点的A股，注明行情日期" : "查询 sh600519 最新行情并注明来源" } : research ? { query: "公开技术资料" } : screening ? { pageSize: 2 } : { stockCode: "sh600519" };
-    const delta = afterTool ? { content: primary ? "已取得子代理结果。" : research ? "公开技术资料，来源[官方资料](https://example.com/docs)，发布于2026-10-24。" : screening ? "2026-10-26日线快照，命中3只，当前展示2只。" : "测试股票最新价100，来源腾讯行情。" } : {
+    const tool = primary ? "Agent" : requestedQuery ?? (research ? "web_search" : screening ? "stock_screen" : portfolio ? "stock_watchlist_add" : todo ? "todo_add" : "stock_quote");
+    const tasks: Record<string, string> = { "web-researcher": "检索公开技术资料并注明来源", "stock-screener": "筛选符合520买点的A股，注明行情日期", "stock-portfolio": "把 sh600519 加入自选", "todo-recorder": "添加待办买牛奶，分类生活" };
+    const args = primary ? { profile: requestedProfile, task: requestedQuery ? `查询当前登录用户清单，使用 ${requestedQuery}` : tasks[requestedProfile] || "查询 sh600519 最新行情并注明来源" } : requestedQuery ? {} : research ? { query: "公开技术资料" } : screening ? { pageSize: 2 } : todo ? { content: "买牛奶", category: "生活" } : { stockCode: "sh600519" };
+    const delta = afterTool ? { content: requestedQuery ? personalAnswers[requestedQuery] : primary ? "已取得子代理结果。" : research ? "公开技术资料，来源[官方资料](https://example.com/docs)，发布于2026-10-24。" : screening ? "2026-10-26日线快照，命中3只，当前展示2只。" : todo ? "已添加待办：买牛奶，分类生活，未完成。" : portfolio ? "已加入我的自选。" : "测试股票最新价100，来源腾讯行情。" } : {
       tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: tool, arguments: JSON.stringify(args) } }],
     };
     response.writeHead(200, { "content-type": "text/event-stream" });
@@ -202,7 +297,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     resources.settingsManager.setDefaultThinkingLevel("high");
     // Settings are persisted in a fixture backend, never in the checkout used by the running gateway.
     const fixtureBackend = join(root, "backend");
-    for (const id of ["stock-analyst", "web-researcher", "stock-screener"]) {
+    for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder"]) {
       await mkdir(join(fixtureBackend, "subagents", id), { recursive: true });
       await writeFile(join(fixtureBackend, "subagents", id, "agent.md"), [
         "---", `name: ${id}`, 'tools: ["*"]', 'skills: ["*"]', 'extensions: ["unsafe"]',
@@ -213,19 +308,21 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     await writeFile(join(fixtureBackend, "skills", "web-research", "SKILL.md"), "---\nname: web-research\ndescription: 测试检索\n---\n仅检索公开资料。");
     const features = new FeatureManager(root, agentDir, resources.settingsManager, resources.modelRuntime, fixtureBackend, resources.permissions);
     let settings = await features.getSubagentSettings();
-    assert.deepEqual(settings.profiles.map(profile => profile.id), ["stock-analyst", "web-researcher", "stock-screener"]);
-    assert.deepEqual(settings.profiles.map(profile => profile.tools), [STOCK_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS]);
-    assert.deepEqual(settings.profiles.map(profile => profile.skills), [["stock-520"], ["web-research"], []]);
+    assert.deepEqual(settings.profiles.map(profile => profile.id), ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder"]);
+    assert.deepEqual(settings.profiles.map(profile => profile.tools), [STOCK_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS, PORTFOLIO_TOOLS, TODO_TOOLS]);
+    assert.deepEqual(settings.profiles.map(profile => profile.skills), [["stock-520"], ["web-research"], [], [], []]);
     assert.ok(settings.profiles.every(profile => profile.extensions?.length === 0 && profile.permissions?.[0].effect === "deny"));
     await features.setSubagentProfileEnabled("web-researcher", false);
     settings = await features.getSubagentSettings();
-    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [true, false, true]);
+    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [true, false, true, true, true]);
     await features.setSubagentProfileEnabled("web-researcher", true);
     await features.setSubagentProfileEnabled("stock-analyst", false);
     settings = await features.getSubagentSettings();
-    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [false, true, true]);
+    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [false, true, true, true, true]);
     await features.setSubagentProfileEnabled("stock-screener", false);
-    for (const id of ["stock-analyst", "web-researcher", "stock-screener"]) await assert.rejects(features.deleteSubagentProfile(id), /不能删除/);
+    await features.setSubagentProfileEnabled("stock-portfolio", false);
+    await features.setSubagentProfileEnabled("todo-recorder", false);
+    for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder"]) await assert.rejects(features.deleteSubagentProfile(id), /不能删除/);
     // The tool schema exposes only the currently enabled researcher.
     const researchOnly = await createSession({ ...resources, features }, "1");
     activeSessions.push(researchOnly);
@@ -377,6 +474,81 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     assert.ok(screenRun?.messages.some(message => message.tools?.some(tool => tool.name === "stock_screen" && tool.status === "done")));
     assert.equal(stockRequests, 1, "screening must not re-fetch external stock quotes");
     assert.equal((await resources.features.getSubagentSettings()).active, 0);
+    // The real SDK mounts only search and the two business writes for portfolio tasks.
+    requestedProfile = "stock-portfolio";
+    const beforePortfolio = requests.length;
+    await runWithStockToolToken(token, () => active.session.prompt("把600519加入我的自选", { expandPromptTemplates: false }));
+    const portfolioBodies = requests.slice(beforePortfolio);
+    assert.equal(portfolioBodies.length, 4);
+    for (const body of portfolioBodies) {
+      const names: string[] = body.tools.map((tool: any) => tool.function.name);
+      assert.deepEqual([...names].sort(), names.includes("Agent") ? ["Agent"] : [...PORTFOLIO_TOOLS].sort());
+      assert.ok(!JSON.stringify(body).includes(token));
+    }
+    assert.equal(portfolioRequests, 1);
+    const portfolioRun = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1)?.subagent;
+    assert.equal(portfolioRun?.profile, "stock-portfolio");
+    assert.equal(portfolioRun?.name, "股票记录");
+    assert.equal(portfolioRun?.status, "done");
+    assert.ok(portfolioRun?.messages.some(message => message.tools?.some(tool => tool.name === "stock_watchlist_add" && tool.status === "done")));
+    const restoredPortfolio = await resumeSessionFromDatabase(resources, { ...buildPersistedRecord(active, root), sessionPath: undefined });
+    activeSessions.push(restoredPortfolio);
+    assert.deepEqual(convertActiveMessages(restoredPortfolio).flatMap(message => message.tools ?? []).at(-1)?.subagent, JSON.parse(JSON.stringify(portfolioRun)));
+    // Todo recording must work without any stock, list, edit, remove, or management permission.
+    requestedProfile = "todo-recorder";
+    const beforeTodo = requests.length;
+    await runWithStockToolToken(token, () => active.session.prompt("添加待办买牛奶，分类生活", { expandPromptTemplates: false }));
+    const todoBodies = requests.slice(beforeTodo);
+    assert.equal(todoBodies.length, 4);
+    for (const body of todoBodies) {
+      const names: string[] = body.tools.map((tool: any) => tool.function.name);
+      assert.deepEqual([...names].sort(), names.includes("Agent") ? ["Agent"] : TODO_TOOLS);
+      assert.ok(!JSON.stringify(body).includes(token));
+      assert.ok(!JSON.stringify(body).includes("PRIVATE_PROJECT_CONTEXT_MUST_NOT_APPEAR"));
+    }
+    assert.equal(todoRequests, 1);
+    const todoRun = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1)?.subagent;
+    assert.equal(todoRun?.profile, "todo-recorder");
+    assert.equal(todoRun?.name, "待办记录");
+    assert.equal(todoRun?.status, "done");
+    assert.ok(todoRun?.messages.some(message => message.tools?.some(tool => tool.name === "todo_add" && tool.status === "done")));
+    const restoredTodo = await resumeSessionFromDatabase(resources, { ...buildPersistedRecord(active, root), sessionPath: undefined });
+    activeSessions.push(restoredTodo);
+    assert.deepEqual(convertActiveMessages(restoredTodo).flatMap(message => message.tools ?? []).at(-1)?.subagent, JSON.parse(JSON.stringify(todoRun)));
+    assert.equal((await resources.features.getSubagentSettings()).active, 0);
+    // Actual SDK delegation invokes each personal-list tool with only its list permission.
+    for (const [query, question, profile, evidence] of [
+      ["stock_watchlist_list", "现在有哪些自选？", "stock-portfolio", "贵州茅台"],
+      ["stock_position_list", "现在有哪些持仓？", "stock-portfolio", "12.30"],
+      ["todo_list", "现在有哪些待办？", "todo-recorder", "阅读Java并发文章"],
+    ] as const) {
+      requestedQuery = query;
+      requestedProfile = profile;
+      const before = requests.length;
+      const beforeReads = personalListRequests;
+      await runWithStockToolToken(token, () => active.session.prompt(question, { expandPromptTemplates: false }));
+      const bodies = requests.slice(before);
+      assert.equal(bodies.length, 4);
+      const childResult = bodies.find(body => !body.tools.some((tool: any) => tool.function.name === "Agent")
+        && body.messages.at(-1)?.role === "tool");
+      assert.ok(childResult, "child must consume the actual business-tool response");
+      assert.ok(JSON.stringify(childResult.messages.at(-1)).includes(evidence));
+      const parentResult = bodies.find(body => body.tools.some((tool: any) => tool.function.name === "Agent")
+        && body.messages.at(-1)?.role === "tool");
+      assert.ok(parentResult && JSON.stringify(parentResult.messages.at(-1)).includes(evidence), "main agent must receive the queried records");
+      for (const body of bodies) assert.ok(!JSON.stringify(body).includes(token));
+      assert.equal(personalListRequests, beforeReads + 1);
+      const listRun = convertActiveMessages(active).flatMap(message => message.tools ?? []).at(-1)?.subagent;
+      assert.equal(listRun?.profile, profile);
+      assert.equal(listRun?.status, "done");
+      assert.ok(listRun?.messages.some(message => message.tools?.some(tool => tool.name === query && tool.status === "done")));
+      const restoredList = await resumeSessionFromDatabase(resources, { ...buildPersistedRecord(active, root), sessionPath: undefined });
+      activeSessions.push(restoredList);
+      assert.deepEqual(convertActiveMessages(restoredList).flatMap(message => message.tools ?? []).at(-1)?.subagent, JSON.parse(JSON.stringify(listRun)));
+    }
+    requestedQuery = undefined;
+    assert.equal(portfolioRequests, 1, "queries must not create stock records");
+    assert.equal(todoRequests, 1, "queries must not add todos");
     // The SDK creates failed tool results itself; our tool_result hook must attach child details.
     requestedProfile = "stock-analyst";
     childFails = true;

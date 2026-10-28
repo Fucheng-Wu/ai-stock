@@ -18,10 +18,12 @@ import { isImageAttachment } from "../../../shared/images.js";
 import { trackSubagent } from "./subagent-progress.js";
 import { Type } from "typebox";
 import { createPermissionExtension, parsePermissions, type PermissionBroker, type RoleRuntime } from "./permissions.js";
-import { RESEARCH_SUBAGENT_ID, SCREENER_SUBAGENT_ID, STOCK_SUBAGENT_ID, SUBAGENT_POLICIES } from "./agent-policy.js";
+import { PORTFOLIO_SUBAGENT_ID, RESEARCH_SUBAGENT_ID, SCREENER_SUBAGENT_ID, STOCK_SUBAGENT_ID, SUBAGENT_POLICIES, TODO_SUBAGENT_ID } from "./agent-policy.js";
 import { createStockToolsExtension } from "../../subagents/stock-analyst/tools.js";
 import { createWebSearchExtension } from "../../subagents/web-researcher/web-search.js";
 import { createStockScreenToolsExtension } from "../../subagents/stock-screener/tools.js";
+import { createStockPortfolioToolsExtension } from "../../subagents/stock-portfolio/tools.js";
+import { createTodoToolsExtension } from "../../subagents/todo-recorder/tools.js";
 import { AGENT_RESPONSE_FORMAT } from "./response-format.js";
 import type {
   FeatureSettings,
@@ -262,7 +264,7 @@ export class FeatureManager {
     extensions?: string[];
     scope: "global" | "project";
   }): Promise<void> {
-    throw new Error("当前工作台仅允许使用项目预置的股票分析、信息检索和全市场选股子代理，不支持添加其他角色。");
+    throw new Error("当前工作台仅允许使用项目预置的股票分析、信息检索、全市场选股、股票记录和待办记录子代理，不支持添加其他角色。");
 
   }
 
@@ -301,7 +303,7 @@ export class FeatureManager {
         exposure: "model-only",
         executionMode: "parallel",
         parameters: Type.Object({
-          profile: Type.Union(enabledProfiles.map(profile => Type.Literal(profile.id)), { description: "全市场520选股与筛选证据选择 stock-screener；具体标的行情与分析选择 stock-analyst；公开信息检索选择 web-researcher" }),
+          profile: Type.Union(enabledProfiles.map(profile => Type.Literal(profile.id)), { description: "查看或添加待办选择 todo-recorder；查看或添加我的自选/持仓选择 stock-portfolio；全市场520选股与筛选证据选择 stock-screener；具体标的行情与分析选择 stock-analyst；公开信息检索选择 web-researcher" }),
           task: Type.String({ minLength: 1, description: "完整、独立的任务说明" }),
         }),
         execute: async (toolCallId, params, signal, onUpdate, ctx) => {
@@ -310,7 +312,7 @@ export class FeatureManager {
           const profile = latest.profiles.find((item) => item.id === params.profile && item.enabled);
           if (!profile) throw new Error(`子代理角色不可用：${params.profile}`);
           const policy = SUBAGENT_POLICIES.find(item => item.id === profile.id);
-          if (!policy) throw new Error("普通 Agent 只能调用股票分析、信息检索或全市场选股子代理");
+          if (!policy) throw new Error("普通 Agent 只能调用股票分析、信息检索、全市场选股、股票记录或待办记录子代理");
           if (!ctx.model) throw new Error("当前会话尚未选择模型");
           if (this.activeSubagents >= latest.maxConcurrent) throw new Error(`子代理并发已达到上限 ${latest.maxConcurrent}`);
           if (signal?.aborted) throw new Error("子代理任务已取消");
@@ -342,7 +344,9 @@ export class FeatureManager {
                 createPermissionExtension(runtime, this.permissionBroker, ctx.cwd, profile),
                 ...[profile.id === STOCK_SUBAGENT_ID ? createStockToolsExtension()
                   : profile.id === RESEARCH_SUBAGENT_ID ? createWebSearchExtension()
-                  : profile.id === SCREENER_SUBAGENT_ID ? createStockScreenToolsExtension() : undefined].filter((factory): factory is ExtensionFactory => !!factory),
+                  : profile.id === SCREENER_SUBAGENT_ID ? createStockScreenToolsExtension()
+                  : profile.id === PORTFOLIO_SUBAGENT_ID ? createStockPortfolioToolsExtension()
+                  : profile.id === TODO_SUBAGENT_ID ? createTodoToolsExtension() : undefined].filter((factory): factory is ExtensionFactory => !!factory),
               ],
               skillsOverride: () => ({ skills: [], diagnostics: [] }),
               systemPrompt: childPrompt,

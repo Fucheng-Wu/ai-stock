@@ -23,7 +23,7 @@ import {
 import { SessionPool } from "./lib/session-pool.js";
 import { buildPersistedRecord } from "./lib/session-record.js";
 import { createSharedResources } from "./lib/shared-resources.js";
-import { runWithStockToolToken } from "../subagents/stock-analyst/tools.js";
+import { runWithWorkbenchToolToken } from "./lib/workbench-api.js";
 import type { ActiveSession } from "./lib/types.js";
 import { authenticateWorkbench, requireCommandPermission, WorkbenchAuthError, WorkbenchServiceError, type WorkbenchIdentity } from "./lib/workbench-auth.js";
 import { historyPage } from "./lib/history-page.js";
@@ -237,7 +237,7 @@ function lastPromptError(active: ActiveSession): string | undefined {
     : undefined;
 }
 
-function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, stockAccessToken?: string, images?: ImageAttachment[]): void {
+function startPrompt(ws: WebSocket, active: ActiveSession, text: string, requestId?: string, workbenchAccessToken?: string, images?: ImageAttachment[]): void {
   if (active.promptTask || active.operationTask || !active.session.isIdle) throw new Error("此会话正在工作，请等待或先取消");
   if (images?.length && !active.session.model?.input.includes("image")) throw new Error("当前模型未启用图像输入，暂时无法发送图片。");
   active.role.controller = new AbortController();
@@ -251,7 +251,7 @@ function startPrompt(ws: WebSocket, active: ActiveSession, text: string, request
     if (active.role.controller.signal.aborted) throw new Error("已取消发送");
     accepted = true;
     send(ws, { type: "prompt_accepted", sessionId: active.id, requestId });
-    await runWithStockToolToken(stockAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false, images: images?.map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType })) }));
+    await runWithWorkbenchToolToken(workbenchAccessToken, () => active.session.prompt(text, { expandPromptTemplates: false, images: images?.map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType })) }));
     promptError = lastPromptError(active);
   })()
     .catch((error) => {

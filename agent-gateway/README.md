@@ -75,32 +75,34 @@ Agent 会复用 `PI_AGENT_DIR` 下的：
 - `auth.json`：Provider 凭证；
 - `settings.json`：Pi 设置；
 - `sessions/`：Pi 运行时 JSONL；完整内容会同步备份到 MySQL；
-- `mcp.json`：保留配置管理能力；当前普通 Agent 和三个子代理均不加载 MCP。
+- `mcp.json`：保留配置管理能力；当前普通 Agent 和五个子代理均不加载 MCP。
 
 项目专属技能和子 Agent 分别放在 `backend/skills` 与 `backend/subagents`。
 
-## 主 Agent、股票分析、全市场选股与信息检索子代理
+## 主 Agent 与业务子代理
 
 主 Agent 固定为 `general`（普通 Agent），可以正常文字对话，唯一工具是 `Agent`，且只能
-委派给 `stock-analyst`（股票行情与分析）、`web-researcher`（各领域公开信息检索）或 `stock-screener`（全市场520选股）。具体股票分析由股票子代理处理，筛选候选与快照证据由选股子代理处理。新版不会提供上游的 Build、Plan
+委派给 `stock-analyst`（股票行情与分析）、`web-researcher`（各领域公开信息检索）、`stock-screener`（全市场520选股）、`stock-portfolio`（新增自选/持仓记录）或 `todo-recorder`（新增待办）。具体股票分析由股票子代理处理，筛选候选与快照证据由选股子代理处理。新版不会提供上游的 Build、Plan
 或全局自定义角色；旧会话和 MySQL 恢复的会话也统一使用此限制。
 
-三个角色配置分别位于 `backend/subagents/stock-analyst/agent.md`、`backend/subagents/web-researcher/agent.md` 和 `backend/subagents/stock-screener/agent.md`。
+五个角色配置分别位于 `backend/subagents/stock-analyst/agent.md`、`backend/subagents/web-researcher/agent.md`、`backend/subagents/stock-screener/agent.md`、`backend/subagents/stock-portfolio/agent.md` 和 `backend/subagents/todo-recorder/agent.md`。
 
 工具实现同样归属各自角色目录：`stock-analyst/tools.ts` 提供股票业务工具和本轮身份透传，
-`web-researcher/web-search.ts` 提供联网搜索，`stock-screener/tools.ts` 提供选股快照查询。`src/lib/feature-manager.ts` 创建子代理时显式导入并按角色挂载，
-通用权限控制继续保留在 `src/lib`。
+`web-researcher/web-search.ts` 提供联网搜索，`stock-screener/tools.ts` 提供选股快照查询，`stock-portfolio/tools.ts` 提供自选/持仓新增，`todo-recorder/tools.ts` 提供待办新增。`src/lib/feature-manager.ts` 创建子代理时显式导入并按角色挂载，
+通用权限控制保留在 `src/lib`，业务身份与 Java 请求共用 `src/lib/workbench-api.ts`。
 
 工具固定为：
 
 - 股票子代理：`stock_search`、`stock_quote`、`stock_kline`、`stock_analyze`，复用 Java 股票服务；
 - 信息检索子代理：仅 `web_search`，通过 Tavily 查询各领域公开网页，包括公告、行业和财经资讯。
 - 全市场选股子代理：仅 `stock_screen`、`stock_screen_detail`，通过 `STOCK_API_BASE_URL` 的鉴权接口查询 MySQL 已完成沪深北日线快照，重新校验股票权限。若依16点采集、17点筛选，固定北京时间；迁移和调度见 `../docs/deploy-stock-screener.md`。不再读取 `STOCK_SCREEN_DATA_DIR`，接口失败不回退到文件。
+- 股票记录子代理：仅 `stock_search`、`stock_watchlist_add`、`stock_position_add`、`stock_watchlist_list`、`stock_position_list`，沿用名称搜索与 Java 查询/新增接口，透传当前用户身份，查询校验对应列表权限，新增校验对应新增权限；支持按名称/代码分页查看自己的自选和持仓成本、股数。持仓需用户提供每股成本价和股数，名称模糊先确认，已存在不覆盖，结果未知不自动重试。这是工作台记账，无证券下单能力。更新前端并部署新角色目录、重启网关后生效，无需数据库迁移。
+- 待办记录子代理：仅 `todo_add`、`todo_list`，通过同一 Java 后端的 `POST /todo/task` 新增未完成事项、`GET /todo/task/list` 查询自己的清单，逐次校验 `agent:chat:use` 和 `todo:task:add`，不要求股票或待办列表权限。支持工作/学习/生活分类，内容最多500字符，未指定分类可按内容归类、无法判断默认工作。查询需 `agent:chat:use` 和 `todo:task:list`，按内容、分类、完成状态筛选并分页；没有日期、提醒、修改、删除能力；结果未知先到清单核实，不自动重试。例如“帮我添加待办：买牛奶，生活类”。更新前端并部署 `todo-recorder` 目录、重启网关后生效，无需数据库迁移或新增环境变量。
 
 混合任务由主 Agent 先检索，再将带来源、日期和不确定性的结果交给股票子代理分析。
-股票或选股子代理需要更多外部证据时向主 Agent 提出检索需求。三个子代理不能相互调用。
+股票或选股子代理需要更多外部证据时向主 Agent 提出检索需求。五个子代理不能相互调用。
 
-两层代理均不提供文件、目录、代码检索、写入、编辑、终端、执行代码、MCP 等能力。
+两层代理均不提供文件、目录、代码检索、文件写入与编辑、终端、执行代码、MCP 等能力；股票记录和待办记录角色仅能通过各自固定业务工具查询或新增当前用户记录。
 工具可见性与执行权限双重限制；修改配置中的 tools、extensions 或 skills 不能扩大权限。
 全局扩展、技能、提示模板和项目 AGENTS.md 不会自动注入代理上下文。
 
@@ -109,7 +111,7 @@ Agent 会复用 `PI_AGENT_DIR` 下的：
 
 权限协议兼容上游的 `action` 和 `patterns`，前端按队列展示操作对象与本会话授权范围。
 本会话授权只在当前角色和会话内生效，可放行匹配的待确认操作；拒绝会取消该会话其余
-待确认请求。明确禁止的操作不会被已记忆授权放行。当前普通 Agent 和三个子代理的
+待确认请求。明确禁止的操作不会被已记忆授权放行。当前普通 Agent 和五个子代理的
 固定白名单仍优先生效，正常股票工具无需确认，内部操作直接拒绝。
 
 `stock-520` 和 `web-research` 由服务端读取项目内指定文件，将正文分别注入股票和信息检索子代理，

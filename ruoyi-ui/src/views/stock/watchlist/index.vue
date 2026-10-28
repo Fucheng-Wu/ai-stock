@@ -159,6 +159,9 @@ export default {
   created() {
     this.getList()
   },
+  activated() {
+    if (!this.loading) this.getList()
+  },
   methods: {
     analysis(row) {
       return row && row.stockCode ? this.analysisByCode[row.stockCode] : null

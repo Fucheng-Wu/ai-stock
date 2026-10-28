@@ -324,6 +324,9 @@ export default {
   created() {
     this.load()
   },
+  activated() {
+    if (!this.listLoading) this.load()
+  },
   methods: {
     report(row) {
       return row ? this.reports[row.positionId] : null

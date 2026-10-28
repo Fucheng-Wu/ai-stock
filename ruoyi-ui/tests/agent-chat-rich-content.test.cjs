@@ -46,7 +46,7 @@ function loadSource(relativePath, mocks = {}) {
 
 const { buildAgentContent, highlightAgentCode } = loadSource('src/utils/agent-markdown.js')
 const { parseAgentChart } = loadSource('src/utils/agent-echarts.js')
-const { groupSessions, draftKey, MAX_CACHED_SESSIONS, MAX_VISIBLE_MESSAGES } = loadSource('src/utils/agent-chat-state.js')
+const { groupSessions, draftKey, toolDescription, toolPreview, MAX_CACHED_SESSIONS, MAX_VISIBLE_MESSAGES } = loadSource('src/utils/agent-chat-state.js')
 const { readImage, MAX_IMAGE_BYTES } = loadSource('src/utils/agent-images.js')
 const MarkdownComponent = loadSource('src/views/agent/chat/components/AgentMarkdown.vue', { './AgentCodeBlock.vue': {}, './AgentEchart.vue': {} }).default
 const ToolCardComponent = loadSource('src/views/agent/chat/components/AgentToolCard.vue').default
@@ -65,6 +65,14 @@ const Chat = loadSource('src/views/agent/chat/index.vue', {
 function prose(text) {
   return buildAgentContent(text, false).filter(part => part.type === 'markdown').map(part => part.html).join('')
 }
+
+test('personal list tools show query names and pagination without claiming records were added', () => {
+  for (const [name, label] of [['stock_watchlist_list', '查看我的自选'], ['stock_position_list', '查看我的持仓'], ['todo_list', '查看待办清单']]) {
+    assert.equal(toolDescription({ name }), label)
+    assert.equal(toolPreview({ name, output: JSON.stringify({ success: true, operation: 'list', target: 'todo', total: 23, page: 1, hasMore: true }) }), '查询到 23 条记录 · 第 1 页 · 还有更多')
+  }
+  assert.equal(toolPreview({ name: 'todo_list', output: JSON.stringify({ operation: 'list', total: 0, page: 1, hasMore: false }) }), '查询到 0 条记录 · 第 1 页')
+})
 
 test('Markdown renders headings, report tables, separators and nested lists', () => {
   const html = prose('# 分析报告\n\n| 证据 | 数值 |\n| --- | --- |\n| MA20 | 12.01 |\n\n---\n\n- 趋势\n  - 向下\n')

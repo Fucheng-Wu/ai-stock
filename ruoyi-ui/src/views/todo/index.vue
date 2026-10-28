@@ -219,6 +219,9 @@ export default {
   created() {
     this.getList()
   },
+  activated() {
+    if (!this.loading) this.getList()
+  },
   methods: {
     chipClass(item) {
       return 'todo-chip--' + item.theme
