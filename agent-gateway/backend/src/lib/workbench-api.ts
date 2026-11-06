@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { authenticateWorkbench } from "./workbench-auth.js";
+import { currentReportExecution, requestReportWorker } from "./report-worker-client.js";
 
 // 身份仅存在于本轮异步调用链；所有业务子代理共享此上下文，不进入模型或历史。
 const toolIdentity = new AsyncLocalStorage<{ token?: string }>();
@@ -15,6 +16,12 @@ function currentToken(): string {
 }
 
 export async function authorizeWorkbenchTool(requiredPermission: string, signal?: AbortSignal): Promise<void> {
+  const execution = currentReportExecution();
+  if (execution) {
+    execution.signal?.throwIfAborted();
+    await requestReportWorker("authorize", { runId: execution.runId, leaseToken: execution.leaseToken, requiredPermission }, signal || execution.signal);
+    return;
+  }
   await authenticateWorkbench(currentToken(), { signal, requiredPermission });
 }
 
@@ -25,6 +32,9 @@ interface RequestOptions {
   permissionName?: string;
   mutation?: boolean;
   verificationTarget?: string;
+  method?: "GET" | "POST" | "PUT" | "DELETE";
+  returnData?: boolean;
+  uncertainMessage?: string;
 }
 
 /** Server-selected paths only; model tool schemas never accept URLs, credentials or user IDs. */
@@ -32,11 +42,17 @@ export async function requestWorkbenchApi(
   path: string, signal: AbortSignal | undefined, body: Record<string, unknown> | undefined,
   options: RequestOptions,
 ): Promise<unknown> {
+  const execution = currentReportExecution();
+  if (execution) {
+    execution.signal?.throwIfAborted();
+    if (options.mutation || (options.method && options.method !== "GET")) throw new Error("定时报告只允许只读业务查询。");
+    return requestReportWorker("data", { runId: execution.runId, leaseToken: execution.leaseToken, path, body }, signal || execution.signal);
+  }
   const token = currentToken();
   signal?.throwIfAborted();
   const service = options.serviceName || "工作台";
   const forbidden = `当前账号没有${options.permissionName || "此操作"}权限（${options.requiredPermission}）。`;
-  const uncertain = `新增结果尚未确认，请先在${options.verificationTarget || "对应菜单"}核实是否已添加，再决定是否重试。`;
+  const uncertain = options.uncertainMessage || `新增结果尚未确认，请先在${options.verificationTarget || "对应菜单"}核实是否已添加，再决定是否重试。`;
   const baseUrl = new URL(process.env.STOCK_API_BASE_URL || "http://127.0.0.1:8080");
   if (!["http:", "https:"].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
     throw new Error("STOCK_API_BASE_URL 必须是无账号、查询参数或片段的 HTTP(S) 后端地址。");
@@ -50,7 +66,7 @@ export async function requestWorkbenchApi(
   let response: Response;
   try {
     response = await fetch(`${baseUrl.toString().replace(/\/$/, "")}${path}`, {
-      method: body ? "POST" : "GET",
+      method: options.method || (body ? "POST" : "GET"),
       headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       redirect: "error",
@@ -75,7 +91,7 @@ export async function requestWorkbenchApi(
   if (result.code === 403) throw new Error(forbidden);
   if (result.code !== 200) throw new Error(typeof result.msg === "string" && result.msg ? result.msg : `${service}服务返回错误。`);
   // 若依新增接口成功时只有 code/msg，没有 data，必须按业务状态确认。
-  if (options.mutation) return { success: true };
+  if (options.mutation && !options.returnData) return { success: true };
   if (result.data == null) throw new Error(`${service}服务未返回数据，不能据此作出结论。`);
   return result.data;
 }

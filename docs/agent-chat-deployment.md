@@ -37,7 +37,7 @@ sql/agent_chat.sql
 ```
 
 也可以使用 `bin\start-agent-gateway.cmd`。启动脚本默认把 `PI_WORKSPACE_DIR` 设置为
-当前 `ai-stock` 仓库根目录，作为会话工作目录标识。普通 Agent 与五个子代理均不开放
+当前 `ai-stock` 仓库根目录，作为会话工作目录标识。普通 Agent 与六个子代理均不开放
 文件和终端工具；改动工作目录不会扩大工具权限。需要改为其他目录时，可在启动前
 显式设置该环境变量。
 
@@ -184,7 +184,7 @@ MCP 配置必须另外具备 `agent:chat:manage`，在每个 WebSocket 命令执
 ## 股票分析、信息检索与专属技能
 
 主 Agent 固定为“普通 Agent”（`general`），唯一工具为 `Agent`，且只能调用
-`stock-analyst` 股票分析、`web-researcher` 信息检索、`stock-screener` 全市场选股、`stock-portfolio` 股票记录或 `todo-recorder` 待办记录子代理。
+`stock-analyst` 股票分析、`web-researcher` 信息检索、`stock-screener` 全市场选股、`stock-portfolio` 股票记录、`todo-recorder` 待办记录或 `report-manager` 报告任务管理子代理。
 具体标的行情与分析交给股票分析角色，公开资料交给信息检索角色，全市场520候选和快照证据交给选股角色，查看或新增自选、持仓交给股票记录角色，查看或新增待办交给待办记录角色；其他问题可以正常文字对话。
 旧会话、JSONL 和 MySQL 备份恢复的会话也使用同一角色，不能切换到上游 Build/Plan
 或通过自定义角色放开权限。
@@ -195,7 +195,8 @@ MCP 配置必须另外具备 `agent:chat:manage`，在每个 WebSocket 命令执
 `agent-gateway/backend/subagents/web-researcher/web-search.ts`；选股工具位于
 `agent-gateway/backend/subagents/stock-screener/tools.ts`；股票记录位于
 `agent-gateway/backend/subagents/stock-portfolio/tools.ts`；待办记录位于
-`agent-gateway/backend/subagents/todo-recorder/tools.ts`。网关通过固定导入按角色挂载工具，部署时需要包含五个子代理目录。
+`agent-gateway/backend/subagents/todo-recorder/tools.ts`；报告任务管理位于
+`agent-gateway/backend/subagents/report-manager/tools.ts`，后台报告部署另见 `docs/agent-reports.md`。网关通过固定导入按角色挂载工具，部署时需要包含六个子代理目录。
 
 | 工具 | 用途 | 后端接口 |
 | --- | --- | --- |
@@ -255,7 +256,7 @@ TAVILY_API_KEY=填写Tavily密钥
 两层代理均禁止 `read`、`grep`、`find`、`ls`、`write`、`edit`、`bash`、执行代码等内部
 工具，并关闭全局扩展、MCP、项目上下文和提示模板的自动加载。工具权限由后端精确
 白名单限制，不能通过修改角色文件或页面设置扩大。股票技能已加载在系统提示中，无需
-也不能让代理读取文件。主 Agent 不直接调用股票、选股、搜索或记录工具，五个子代理不能相互或递归委派。
+也不能让代理读取文件。主 Agent 不直接调用股票、选股、搜索或记录工具，六个子代理不能相互或递归委派。
 管理页分别控制五个角色的启停，运行时配置文件仍为 `backend/subagents/settings.json`。
 
 全市场选股通过 `STOCK_API_BASE_URL` 调用 Java 鉴权接口读取 MySQL，接口失败不回退到本地文件。

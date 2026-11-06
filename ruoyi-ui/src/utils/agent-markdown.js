@@ -23,6 +23,11 @@ markdown.renderer.rules.table_open = (tokens, index, options, env, renderer) =>
 markdown.renderer.rules.table_close = () => '</table></div>\n'
 const renderImage = markdown.renderer.rules.image
 markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
+  const source = tokens[index].attrGet('src') || ''
+  if (env.offlineImages && !/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(source)) {
+    const label = markdown.utils.escapeHtml(tokens[index].content || '查看原图')
+    return `<span class="report-external-image">图片：<a href="${markdown.utils.escapeHtml(source)}" target="_blank" rel="noopener noreferrer">${label}（需联网查看）</a></span>`
+  }
   tokens[index].attrSet('loading', 'lazy')
   tokens[index].attrSet('referrerpolicy', 'no-referrer')
   return renderImage(tokens, index, options, env, renderer)
@@ -51,10 +56,10 @@ function isFenceClosed(token, lines) {
 }
 
 /** Keep chart/code components stable while surrounding Markdown is still streaming. */
-export function buildAgentContent(text, streaming) {
+export function buildAgentContent(text, streaming, options = {}) {
   const source = String(text || '').replace(/\r\n?/g, '\n')
   const lines = source.split('\n')
-  const env = {}
+  const env = { offlineImages: Boolean(options.offlineImages) }
   const tokens = markdown.parse(source, env)
   const parts = []
   let prose = []

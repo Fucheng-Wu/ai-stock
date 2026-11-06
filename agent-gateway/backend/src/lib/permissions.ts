@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { PermissionDecision, PermissionRequest, PermissionRule, PrimaryAgentInfo, ServerMessage } from "../../../shared/types.js";
 import { PRIMARY_TOOLS, SUBAGENT_POLICIES } from "./agent-policy.js";
+import { currentReportExecution, REPORT_READ_PROFILES, REPORT_READ_TOOLS, requestReportWorker } from "./report-worker-client.js";
 
 export function matches(pattern: string, value: string): boolean {
   const expression = pattern.split("*").map((part) => part.split("?").map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".")).join(".*");
@@ -140,6 +141,7 @@ export interface RoleRuntime {
   sessionId: string;
   profile: PrimaryAgentInfo;
   controller: AbortController;
+  reportOnly?: boolean;
 }
 
 async function canonicalPath(path: string): Promise<string> {
@@ -181,10 +183,19 @@ export function createPermissionExtension(
   return (pi) => {
     pi.on("tool_call", async (event) => {
       if (runtime.controller.signal.aborted) return { block: true, reason: "任务已取消" };
+      const execution = currentReportExecution();
+      if (execution) {
+        if (execution.signal?.aborted) return { block: true, reason: "报告执行已取消或超时" };
+        if (child ? !REPORT_READ_TOOLS.has(event.toolName)
+          : event.toolName !== "Agent" || !REPORT_READ_PROFILES.has(String(event.input.profile))) {
+          return { block: true, reason: "定时报告仅允许查询与分析，不能修改业务记录或管理任务" };
+        }
+        await requestReportWorker("authorize", { runId: execution.runId, leaseToken: execution.leaseToken, requiredPermission: "agent:report:list" }, execution.signal);
+      }
       const allowed = child ? SUBAGENT_POLICIES.find(policy => policy.id === child.id)?.tools.includes(event.toolName) : PRIMARY_TOOLS.includes(event.toolName);
       if (!allowed) return { block: true, reason: "工作台禁止内部查询、文件、终端及未授权工具调用" };
       if (!child && event.toolName === "Agent" && !SUBAGENT_POLICIES.some(policy => policy.id === event.input.profile)) {
-        return { block: true, reason: "普通 Agent 只能调用股票分析、信息检索、全市场选股、股票记录或待办记录子代理" };
+        return { block: true, reason: "普通 Agent 只能调用股票分析、信息检索、全市场选股、股票记录、待办记录或报告任务管理子代理" };
       }
       if (!child && !runtime.profile.tools.some((pattern) => matches(pattern, event.toolName))) {
         return { block: true, reason: "主代理未获准调用此工具" };

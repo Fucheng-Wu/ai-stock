@@ -11,13 +11,15 @@ import { GENERAL_PRIMARY_ID, PRIMARY_TOOLS } from "./agent-policy.js";
 
 type PersistableMessage = Parameters<SessionManager["appendMessage"]>[0];
 
-async function buildSession(resources: SharedResources, manager: SessionManager, useDefaultModel = false) {
+async function buildSession(resources: SharedResources, manager: SessionManager, useDefaultModel = false, reportOnly = false) {
   // Always migrate legacy sessions to the restricted role, including MySQL JSONL recovery.
   const role: RoleRuntime = {
     sessionId: manager.getSessionId(),
     profile: await resources.primaryAgents.get(GENERAL_PRIMARY_ID),
     controller: new AbortController(),
+    reportOnly,
   };
+  if (reportOnly) role.profile = { ...role.profile, systemPrompt: role.profile.systemPrompt + "\n当前会话是已授权的后台报告执行：用户消息描述的是本次报告要求，应立即查询证据并生成完整报告，不创建或管理任务、不向用户追问、不修改记录。只使用股票分析、公开检索、选股与股票清单查询角色。" };
   const modelId = process.env.AGENT_DEFAULT_MODEL?.trim() || "deepseek-flash";
   const projection = manager.buildSessionProjection();
   // Pi only restores selections automatically when a session has messages.
@@ -87,6 +89,11 @@ export async function createSession(resources: SharedResources, userId: string):
     contextUsage: contextUsageFromSession(session),
     lastAccessAt: Date.now(),
   };
+}
+
+/** Isolated background run, without chat history, JSONL files or live conversation slots. */
+export async function createReportSession(resources: SharedResources) {
+  return buildSession(resources, SessionManager.inMemory(resources.cwd), true, true);
 }
 
 export async function resumeSession(resources: SharedResources, info: SessionInfo, userId: string): Promise<ActiveSession> {

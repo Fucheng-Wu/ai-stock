@@ -1,8 +1,9 @@
 <template>
-  <div class="agent-chat-page" :data-agent-theme="theme" :class="{ 'has-subagent-panel': selectedSubagentTool }">
+  <div class="agent-chat-page" :data-agent-theme="theme" :style="panelWidthStyle" :class="{ 'has-subagent-panel': selectedSubagentTool, 'has-report-panel': canViewReports && reportsOpen, 'is-left-panel-docked': panelSizing.leftDocked, 'is-left-panel-overlay': !panelSizing.leftDocked, 'is-right-panel-overlay': panelRightKind && !panelSizing.rightDocked }">
     <div v-if="mobileSidebarOpen" class="agent-sidebar-mask" @click="mobileSidebarOpen = false" />
 
-    <aside class="agent-sidebar" :class="{ 'is-mobile-open': mobileSidebarOpen }">
+    <aside id="agent-session-sidebar" class="agent-sidebar" :class="{ 'is-mobile-open': mobileSidebarOpen }">
+      <agent-panel-resizer v-if="panelSizing.leftDocked" side="left" label="调整左侧会话栏宽度" controls="agent-session-sidebar" :value="panelSizing.left" :min="panelSizing.leftMin" :max="panelSizing.leftMax" :dragging="Boolean(panelResizeDrag && panelResizeDrag.side === 'left')" @start="startPanelResize('left', $event)" @move="movePanelResize" @end="finishPanelResize" @change="setPanelWidth('left', $event)" @reset="resetPanelWidth('left')" @cancel="cancelPanelResize" />
       <div class="agent-brand">
         <div class="agent-brand__mark">✦</div>
         <div class="agent-brand__copy">
@@ -87,6 +88,7 @@
           <strong>{{ activeTitle }}</strong>
         </div>
         <span v-if="activeModel" class="agent-model-badge"><i class="el-icon-cpu" /> {{ activeModel }}</span>
+        <button v-if="canViewReports" class="agent-icon-button agent-report-toggle" :class="{ 'is-active': reportsOpen }" type="button" :aria-label="reportsOpen ? '收起报告中心' : '打开报告中心'" :aria-expanded="String(reportsOpen)" aria-controls="agent-report-sidebar" title="报告中心" @click="reportsOpen = !reportsOpen"><i class="el-icon-alarm-clock" /><span>报告中心</span></button>
         <button class="agent-icon-button" type="button" :aria-label="theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" :title="theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" @click="toggleTheme"><i :class="theme === 'dark' ? 'el-icon-sunny' : 'el-icon-moon'" /></button>
         <div class="agent-topbar__status" :class="{ 'is-online': isConnected }">
           <span />
@@ -247,7 +249,13 @@
         </div>
       </footer>
     </main>
-    <agent-subagent-panel v-if="selectedSubagentTool" :key="activeSessionId" :tool="selectedSubagentTool" :agents="subagentTools" :now="clockNow" @close="selectedSubagentId = ''" @select="selectedSubagentId = $event" />
+    <agent-subagent-panel v-if="selectedSubagentTool" :key="activeSessionId" :tool="selectedSubagentTool" :agents="subagentTools" :now="clockNow" @close="selectedSubagentId = ''" @select="selectedSubagentId = $event">
+      <agent-panel-resizer v-if="panelSizing.rightDocked && !mobileSidebarOpen" slot="resize-handle" side="right" label="调整右侧栏宽度" controls="agent-subagent-sidebar" :value="panelSizing.right" :min="panelSizing.rightMin" :max="panelSizing.rightMax" :dragging="Boolean(panelResizeDrag && panelResizeDrag.side === 'right')" @start="startPanelResize('right', $event)" @move="movePanelResize" @end="finishPanelResize" @change="setPanelWidth('right', $event)" @reset="resetPanelWidth('right')" @cancel="cancelPanelResize" />
+    </agent-subagent-panel>
+    <aside v-if="canViewReports && reportsOpen" id="agent-report-sidebar" class="agent-report-panel" aria-label="报告中心">
+      <agent-panel-resizer v-if="panelSizing.rightDocked && !mobileSidebarOpen" side="right" label="调整右侧栏宽度" controls="agent-report-sidebar" :value="panelSizing.right" :min="panelSizing.rightMin" :max="panelSizing.rightMax" :dragging="Boolean(panelResizeDrag && panelResizeDrag.side === 'right')" @start="startPanelResize('right', $event)" @move="movePanelResize" @end="finishPanelResize" @change="setPanelWidth('right', $event)" @reset="resetPanelWidth('right')" @cancel="cancelPanelResize" />
+      <agent-report-center :key="draftUserId" ref="reportCenter" @close="reportsOpen = false" @ask="askForReport" />
+    </aside>
     <agent-permission-dialog
       v-if="pendingPermission"
       :key="pendingPermission.id"
@@ -269,6 +277,9 @@ import AgentThinkingPanel from './components/AgentThinkingPanel.vue'
 import AgentPermissionDialog from './components/AgentPermissionDialog.vue'
 import AgentToolGroup from './components/AgentToolGroup.vue'
 import AgentSubagentPanel from './components/AgentSubagentPanel.vue'
+import AgentReportCenter from './components/AgentReportCenter.vue'
+import AgentPanelResizer from './components/AgentPanelResizer.vue'
+import panelResize from '@/utils/agent-panel-resize'
 import chatScroll from '@/utils/agent-chat-scroll'
 import { IMAGE_MIME_TYPES, MAX_IMAGES, imageSource, readImage } from '@/utils/agent-images'
 
@@ -278,13 +289,14 @@ function createId(prefix) {
 
 export default {
   name: 'AgentChat',
-  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog, AgentToolGroup, AgentSubagentPanel },
-  mixins: [chatScroll],
+  components: { AgentMarkdown, AgentThinkingPanel, AgentPermissionDialog, AgentToolGroup, AgentSubagentPanel, AgentReportCenter, AgentPanelResizer },
+  mixins: [chatScroll, panelResize],
   provide() { return { agentAppearance: this } },
   data() {
     return {
       theme: (() => { try { return localStorage.getItem('orange-agent-theme') === 'dark' ? 'dark' : 'light' } catch (_) { return 'light' } })(),
       selectedSubagentId: '',
+      reportsOpen: false,
       socketClient: null,
       connectionToken: '',
       draftUserId: '',
@@ -345,6 +357,7 @@ export default {
     }
   },
   computed: {
+    canViewReports() { const permissions = this.$store.getters.permissions || []; return permissions.includes('*:*:*') || permissions.includes('agent:report:list') },
     subagentTools() { return this.activeState ? this.activeState.messages.flatMap(message => message.tools || []).filter(tool => tool.name === 'Agent' || tool.subagent) : [] },
     selectedSubagentTool() { return this.subagentTools.find(tool => tool.id === this.selectedSubagentId) || null },
     displayName() {
@@ -437,6 +450,9 @@ export default {
     }
   },
   watch: {
+    reportsOpen(value) { if (value) { this.selectedSubagentId = ''; this.mobileSidebarOpen = false } this.$nextTick(() => this.handleRichContentLayout()) },
+    selectedSubagentId(value) { if (value) this.reportsOpen = false },
+    '$route.query.panel'(value) { if (value === 'reports') this.reportsOpen = true },
     inputText() { this.saveDraft() },
     inputImages() { this.saveDraft() },
     activeSessionId() { this.selectedSubagentId = ''; this.previousScrollTop = 0; this.userPinnedScroll = false },
@@ -445,6 +461,7 @@ export default {
     }
   },
   mounted() {
+    if (this.$route.query.panel === 'reports') this.reportsOpen = true
     this.endpointLabel = process.env.VUE_APP_AGENT_WS_URL || '/agent-ws'
     window.addEventListener('keydown', this.handleGlobalShortcut)
     window.addEventListener('focus', this.handleWindowFocus)
@@ -468,6 +485,7 @@ export default {
     }
   },
   methods: {
+    askForReport(prompt) { this.reportsOpen = false; this.useSuggestion(prompt) },
     imageSource,
     async addImages(files) {
       if (!this.canAttach) return
@@ -669,6 +687,7 @@ export default {
       return Number.isFinite(duration) ? `${Math.max(0, duration / 1000).toFixed(1)}秒` : ''
     },
     resetIdentityConnection() {
+      this.reportsOpen = false
       this.saveDraft()
       this.draftUserId = ''
       this.clearSocketTimers()
@@ -1188,6 +1207,7 @@ export default {
           this.finishMessage(state, event.message)
           break
         case 'agent_end': {
+          if (this.$refs.reportCenter) this.$refs.reportCenter.load(true)
           const stopped = state.stopRequested
           state.isStreaming = false
           state.stopRequested = false
@@ -1449,7 +1469,10 @@ export default {
         stock_search: '检索股票名称', stock_quote: '查询股票行情',
         stock_kline: '查询日 K 线', stock_analyze: '520 战法分析',
         stock_watchlist_add: '添加自选股票', stock_position_add: '添加持仓记录', todo_add: '添加待办',
-        stock_watchlist_list: '查看我的自选', stock_position_list: '查看我的持仓', todo_list: '查看待办清单'
+        stock_watchlist_list: '查看我的自选', stock_position_list: '查看我的持仓', todo_list: '查看待办清单',
+        report_clock: '查看北京时间', report_task_list: '查询报告任务', report_task_get: '查看任务详情',
+        report_task_create: '创建报告任务', report_task_update: '修改报告任务', report_task_status: '暂停或恢复任务',
+        report_task_delete: '删除报告任务', report_task_run: '立即生成报告', report_list: '查询报告', report_get: '阅读报告', report_delete: '删除报告'
       }
       return labels[name] || name || '调用工具'
     },

@@ -28,6 +28,7 @@ import type { ActiveSession } from "./lib/types.js";
 import { authenticateWorkbench, requireCommandPermission, WorkbenchAuthError, WorkbenchServiceError, type WorkbenchIdentity } from "./lib/workbench-auth.js";
 import { historyPage } from "./lib/history-page.js";
 import { sendEncoded } from "./lib/transport.js";
+import { startReportWorker } from "./lib/report-worker.js";
 
 loadGatewayEnvironment();
 const workspace = resolve(process.env.PI_WORKSPACE_DIR || process.cwd());
@@ -39,6 +40,7 @@ const resources = await createSharedResources(workspace);
 const sessionStore = new MySqlSessionStore();
 await sessionStore.initialize();
 const models = new ModelManager(resources);
+const reportWorker = startReportWorker(resources);
 const pool = new SessionPool(5);
 const clients = new Set<WebSocket>();
 const initializedClients = new WeakSet<WebSocket>();
@@ -667,6 +669,7 @@ wss.on("connection", (ws) => {
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  const reportShutdown = reportWorker.stop();
   for (const client of clients) client.close(1001, "Server shutting down");
   for (const auth of authInteractions) auth.close();
   const sessions = pool.values();
@@ -678,6 +681,7 @@ async function shutdown(): Promise<void> {
   await Promise.race([
     Promise.allSettled([
       ...activeRequests,
+      reportShutdown,
       ...sessions.map(async active => {
         await active.session.abort();
         await active.promptTask;

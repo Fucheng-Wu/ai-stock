@@ -2,6 +2,7 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*$')]
     [string]$Version = '0.0.8',
     [string]$OutputParent,
+    [string]$BackendJarPath,
     [switch]$SkipBuild,
     [switch]$IncludeStockScreen,
     [switch]$IncludeStockHistory
@@ -16,7 +17,12 @@ if ([string]::IsNullOrWhiteSpace($OutputParent)) {
 $packageName = "ai-stock-deploy-v$Version"
 $packageRoot = Join-Path $OutputParent $packageName
 $archivePath = "$packageRoot.zip"
-$backendJar = Join-Path $projectRoot 'ruoyi-admin\target\ruoyi-admin.jar'
+$backendJar = if ([string]::IsNullOrWhiteSpace($BackendJarPath)) {
+    Join-Path $projectRoot 'ruoyi-admin\target\ruoyi-admin.jar'
+} else {
+    if (-not $SkipBuild) { throw 'BackendJarPath requires -SkipBuild and a separately built backend artifact.' }
+    (Resolve-Path -LiteralPath $BackendJarPath).Path
+}
 $frontendDist = Join-Path $projectRoot 'ruoyi-ui\dist'
 $gatewayRoot = Join-Path $projectRoot 'agent-gateway'
 $deployTemplates = Join-Path $projectRoot 'deploy'
@@ -117,10 +123,11 @@ Copy-Item -LiteralPath (Join-Path $deployTemplates 'config\agent-gateway.env.exa
 Copy-Item -LiteralPath (Join-Path $deployTemplates 'nginx\ai-stock.conf') -Destination (Join-Path $packageRoot 'nginx\ai-stock.conf')
 Copy-Item -LiteralPath (Join-Path $deployTemplates 'systemd\ai-stock.service') -Destination (Join-Path $packageRoot 'systemd\ai-stock.service')
 Copy-Item -LiteralPath (Join-Path $deployTemplates 'systemd\ai-stock-agent.service') -Destination (Join-Path $packageRoot 'systemd\ai-stock-agent.service')
-Copy-Item -LiteralPath (Join-Path $deployTemplates 'README.md') -Destination (Join-Path $packageRoot 'DEPLOY.md')
+$deploymentGuide = [IO.File]::ReadAllText((Join-Path $deployTemplates 'README.md')).Replace('ai-stock-deploy-v0.0.8', $packageName).Replace('-Version 0.0.8', "-Version $Version")
+[IO.File]::WriteAllText((Join-Path $packageRoot 'DEPLOY.md'), $deploymentGuide, [Text.UTF8Encoding]::new($false))
 $packageDocs = Join-Path $packageRoot 'docs'
 New-Item -ItemType Directory -Path $packageDocs | Out-Null
-foreach ($documentName in @('deploy-stock-screener.md', 'stock-history-download.md', 'agent-chat-deployment.md')) {
+foreach ($documentName in @('deploy-stock-screener.md', 'stock-history-download.md', 'agent-chat-deployment.md', 'agent-reports.md')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs\$documentName") -Destination $packageDocs
 }
 
@@ -160,6 +167,17 @@ $packageManifest = [ordered]@{
     includesStockHistory = [bool]$IncludeStockHistory
     marketStorage = 'MySQL; daily RuoYi Quartz jobs at 16:00 and 17:00 Asia/Shanghai'
     embeddedConfigSanitized = $true
+    reportCenter = [ordered]@{
+        enabled = $true
+        location = 'Agent assistant right sidebar'
+        migrationSql = 'sql/agent_reports.sql'
+        sidebarMigrationSql = 'sql/agent_reports_sidebar.sql'
+        htmlExport = $true
+        markdownDownload = $false
+        resizableSidebars = $true
+        requiredSharedEnvironment = 'AGENT_REPORT_WORKER_KEY'
+        upgradeGuide = 'docs/agent-reports.md'
+    }
     stockScreen = if ($IncludeStockScreen) { [ordered]@{
         snapshotId = $stockScreenMetadata.snapshotId
         tradeDate = $stockScreenMetadata.tradeDate

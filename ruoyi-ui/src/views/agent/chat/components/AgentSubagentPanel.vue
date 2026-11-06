@@ -1,5 +1,6 @@
 <template>
-  <aside class="agent-subagent-panel" aria-label="子代理聊天">
+  <aside id="agent-subagent-sidebar" class="agent-subagent-panel" aria-label="子代理聊天">
+    <slot name="resize-handle" />
     <header class="agent-subagent-panel__header">
       <i :class="status === 'running' ? 'el-icon-loading' : 'el-icon-user'" />
       <div><strong>{{ title }}</strong><small>子代理 · {{ status === 'running' ? '执行中' : status === 'error' ? '执行失败或已取消' : '已完成' }}</small></div>

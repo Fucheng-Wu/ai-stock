@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { PORTFOLIO_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS, STOCK_TOOLS, TODO_TOOLS } from "../src/lib/agent-policy.js";
+import { PORTFOLIO_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS, STOCK_TOOLS, TODO_TOOLS, REPORT_TOOLS } from "../src/lib/agent-policy.js";
 import { writeScreenFixture } from "./helpers/stock-screen-fixture.js";
 import { StockScreenStore } from "../src/lib/stock-screen-store.js";
 import { createPermissionExtension, PermissionBroker, type RoleRuntime } from "../src/lib/permissions.js";
@@ -36,7 +36,7 @@ async function runtime(): Promise<RoleRuntime> {
   };
 }
 
-test("primary permits only the five predefined subagents, even when profile capabilities are widened", async () => {
+test("primary permits only the predefined subagents, even when profile capabilities are widened", async () => {
   const role = await runtime();
   role.profile.tools = ["*"];
   role.profile.permissions = [{ action: "*", resource: "*", effect: "allow" }];
@@ -46,7 +46,8 @@ test("primary permits only the five predefined subagents, even when profile capa
   assert.equal(await call("Agent", { profile: "stock-screener", task: "全市场选股" }), undefined);
   assert.equal(await call("Agent", { profile: "stock-portfolio", task: "添加自选" }), undefined);
   assert.equal(await call("Agent", { profile: "todo-recorder", task: "添加待办" }), undefined);
-  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "mcp", "web_fetch", ...STOCK_TOOLS, ...RESEARCH_TOOLS, ...SCREENER_TOOLS, ...PORTFOLIO_TOOLS, ...TODO_TOOLS]) {
+  assert.equal(await call("Agent", { profile: "report-manager", task: "创建定时报告" }), undefined);
+  for (const tool of ["read", "grep", "find", "ls", "write", "edit", "bash", "execute", "mcp", "web_fetch", ...STOCK_TOOLS, ...RESEARCH_TOOLS, ...SCREENER_TOOLS, ...PORTFOLIO_TOOLS, ...TODO_TOOLS, ...REPORT_TOOLS]) {
     assert.equal((await call(tool, { path: "secret", query: "test" }))?.block, true, tool);
   }
   for (const profile of ["general-purpose", "explore", "plan", "build", "stock-analyst ", "web-researcher ", "WEB-RESEARCHER", "stock-screener ", "STOCK-SCREENER", "stock-portfolio ", "STOCK-PORTFOLIO", "todo-recorder ", "TODO-RECORDER"]) {
@@ -297,7 +298,7 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     resources.settingsManager.setDefaultThinkingLevel("high");
     // Settings are persisted in a fixture backend, never in the checkout used by the running gateway.
     const fixtureBackend = join(root, "backend");
-    for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder"]) {
+    for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder", "report-manager"]) {
       await mkdir(join(fixtureBackend, "subagents", id), { recursive: true });
       await writeFile(join(fixtureBackend, "subagents", id, "agent.md"), [
         "---", `name: ${id}`, 'tools: ["*"]', 'skills: ["*"]', 'extensions: ["unsafe"]',
@@ -308,21 +309,22 @@ test("real SDK delegates with isolated tools and injected skills, forwards ident
     await writeFile(join(fixtureBackend, "skills", "web-research", "SKILL.md"), "---\nname: web-research\ndescription: 测试检索\n---\n仅检索公开资料。");
     const features = new FeatureManager(root, agentDir, resources.settingsManager, resources.modelRuntime, fixtureBackend, resources.permissions);
     let settings = await features.getSubagentSettings();
-    assert.deepEqual(settings.profiles.map(profile => profile.id), ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder"]);
-    assert.deepEqual(settings.profiles.map(profile => profile.tools), [STOCK_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS, PORTFOLIO_TOOLS, TODO_TOOLS]);
-    assert.deepEqual(settings.profiles.map(profile => profile.skills), [["stock-520"], ["web-research"], [], [], []]);
+    assert.deepEqual(settings.profiles.map(profile => profile.id), ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder", "report-manager"]);
+    assert.deepEqual(settings.profiles.map(profile => profile.tools), [STOCK_TOOLS, RESEARCH_TOOLS, SCREENER_TOOLS, PORTFOLIO_TOOLS, TODO_TOOLS, REPORT_TOOLS]);
+    assert.deepEqual(settings.profiles.map(profile => profile.skills), [["stock-520"], ["web-research"], [], [], [], []]);
     assert.ok(settings.profiles.every(profile => profile.extensions?.length === 0 && profile.permissions?.[0].effect === "deny"));
     await features.setSubagentProfileEnabled("web-researcher", false);
     settings = await features.getSubagentSettings();
-    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [true, false, true, true, true]);
+    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [true, false, true, true, true, true]);
     await features.setSubagentProfileEnabled("web-researcher", true);
     await features.setSubagentProfileEnabled("stock-analyst", false);
     settings = await features.getSubagentSettings();
-    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [false, true, true, true, true]);
+    assert.deepEqual(settings.profiles.map(profile => profile.enabled), [false, true, true, true, true, true]);
     await features.setSubagentProfileEnabled("stock-screener", false);
     await features.setSubagentProfileEnabled("stock-portfolio", false);
     await features.setSubagentProfileEnabled("todo-recorder", false);
-    for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder"]) await assert.rejects(features.deleteSubagentProfile(id), /不能删除/);
+    await features.setSubagentProfileEnabled("report-manager", false);
+    for (const id of ["stock-analyst", "web-researcher", "stock-screener", "stock-portfolio", "todo-recorder", "report-manager"]) await assert.rejects(features.deleteSubagentProfile(id), /不能删除/);
     // The tool schema exposes only the currently enabled researcher.
     const researchOnly = await createSession({ ...resources, features }, "1");
     activeSessions.push(researchOnly);

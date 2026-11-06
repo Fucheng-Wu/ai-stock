@@ -1,5 +1,7 @@
 # Orange Workbench Agent Gateway
 
+报告中心的离线执行器与 `report-manager` 子代理随网关部署，配置及升级步骤见 `../docs/agent-reports.md`。Java与网关需要相同的 `AGENT_REPORT_WORKER_KEY`；无需保存用户登录令牌。
+
 当前后端以上游 `pi-agent-gateway` 的 `94d9d75` 为基础，选择性同步 `main` 分支
 `18ab3ee28e278bf4c4308bf0208813e9a5f2e699` 中的协议校验、事件序号、慢客户端保护和
 关闭流程改进。工作台保留 MySQL 用户会话隔离、登录身份校验和受限股票分析扩展。

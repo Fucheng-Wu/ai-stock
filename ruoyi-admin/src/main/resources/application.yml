@@ -152,3 +152,6 @@ deepseek:
   api-key: ${DEEPSEEK_API_KEY:}
   # API 地址
   base-url: https://api.deepseek.com/v1/chat/completions
+
+agent:
+  report-worker-key: ${AGENT_REPORT_WORKER_KEY:}

@@ -1,5 +1,9 @@
 # orange 工作台生产部署
 
+报告中心升级需执行 `sql/agent_reports.sql`，并在Java和网关环境配置相同的 `AGENT_REPORT_WORKER_KEY`（至少32字符）；详见 `docs/agent-reports.md`。不配置则停用后台报告执行器。
+报告中心已整合至Agent助手右侧栏；已有报告中心的环境更新前端并执行 `sql/agent_reports_sidebar.sql` 隐藏独立菜单，权限与既有报告保留。
+从 v0.1.5 升级时，报告数据表可继续使用；执行侧栏菜单迁移SQL即可。新版支持拖拽左右侧栏宽度，报告仅提供HTML导出，正文、表格、代码和图表可离线阅读。创建任务不再要求执行器已配置；实际执行仍需Java与网关使用相同密钥。已有服务器的密钥和模型认证继续保留。
+
 全市场选股子代理及输入框新版的已有站点升级步骤，见仓库
 `docs/deploy-stock-screener.md`。首次迁移打包增加 `-IncludeStockHistory`，携带全量SQLite与筛选证据，
 导入MySQL并登记北京时间16点采集、17点筛选两个若依任务；先执行数据库迁移再启动新版Java。
@@ -76,7 +80,7 @@ sudo chown -R wufc:wufc /home/wufc/ai-stock /home/wufc/.pi
 ```bash
 sudo systemctl stop ai-stock-agent ai-stock
 cp -a /home/wufc/ai-stock /home/wufc/ai-stock-backup-$(date +%Y%m%d-%H%M%S)
-unzip -o /home/wufc/ai-stock-deploy-v0.0.8.zip -d /home/wufc/ai-stock
+unzip -o /home/wufc/ai-stock-deploy-v0.0.8.zip -d /home/wufc/ai-stock -x 'config/*'
 sudo chown -R wufc:wufc /home/wufc/ai-stock
 ```
 

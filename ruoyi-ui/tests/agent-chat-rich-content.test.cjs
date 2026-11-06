@@ -46,11 +46,13 @@ function loadSource(relativePath, mocks = {}) {
 
 const { buildAgentContent, highlightAgentCode } = loadSource('src/utils/agent-markdown.js')
 const { parseAgentChart } = loadSource('src/utils/agent-echarts.js')
+const { buildReportHtml, reportDownloadName } = loadSource('src/utils/agent-report-export.js')
 const { groupSessions, draftKey, toolDescription, toolPreview, MAX_CACHED_SESSIONS, MAX_VISIBLE_MESSAGES } = loadSource('src/utils/agent-chat-state.js')
 const { readImage, MAX_IMAGE_BYTES } = loadSource('src/utils/agent-images.js')
 const MarkdownComponent = loadSource('src/views/agent/chat/components/AgentMarkdown.vue', { './AgentCodeBlock.vue': {}, './AgentEchart.vue': {} }).default
 const ToolCardComponent = loadSource('src/views/agent/chat/components/AgentToolCard.vue').default
 const ChatScroll = loadSource('src/utils/agent-chat-scroll.js').default
+const { parsePanelWidths, panelLayout } = loadSource('src/utils/agent-panel-resize.js')
 let workbenchToken
 const Chat = loadSource('src/views/agent/chat/index.vue', {
   './components/AgentMarkdown.vue': {},
@@ -59,12 +61,76 @@ const Chat = loadSource('src/views/agent/chat/index.vue', {
   './components/AgentToolCard.vue': {},
   './components/AgentToolGroup.vue': {},
   './components/AgentSubagentPanel.vue': {},
+  './components/AgentReportCenter.vue': {},
+  './components/AgentPanelResizer.vue': {},
   '@/utils/auth': { getToken: () => workbenchToken }
 }).default
 
 function prose(text) {
   return buildAgentContent(text, false).filter(part => part.type === 'markdown').map(part => part.html).join('')
 }
+
+test('HTML reports embed styles, preserve report structure and escape model-controlled content', () => {
+  const html = buildReportHtml({ title: '<script>alert(1)</script>', runId: 'report-42', scheduleType: 'once', scheduledAt: Date.parse('2026-11-06T08:00:00Z'),
+    prompt: '</details><script>alert(2)</script>', secretToken: 'PRIVATE_TOKEN_NOT_FOR_EXPORT',
+    content: '# 标题\n\n| 股票 | 概况 |\n| --- | --- |\n| 样本 | 待核实 |\n\n```javascript\nconst sample = "<script>"\n```\n\n<script>alert(3)</script>\n\n[引用](https://example.com/source)\n\n![外部图片](https://example.com/image.png)' }, Date.parse('2026-11-06T09:00:00Z'))
+  assert.ok(html.startsWith('<!doctype html>'))
+  assert.match(html, /<html lang="zh-CN">/)
+  assert.match(html, /<style>/)
+  assert.match(html, /<table>/)
+  assert.match(html, /hljs-/)
+  assert.match(html, /&lt;script&gt;/)
+  assert.match(html, /href="https:\/\/example.com\/source"/)
+  assert.match(html, /需联网查看/)
+  assert.match(html, /16:00/)
+  assert.match(html, /17:00/)
+  assert.ok(!/<script\b/i.test(html))
+  assert.ok(!/<img[^>]+src="https?:/i.test(html), 'offline export should not fetch external images')
+  assert.ok(!html.includes('PRIVATE_TOKEN_NOT_FOR_EXPORT'), 'export should only serialize report fields')
+  assert.match(html, /script-src 'none'/)
+  assert.throws(() => buildReportHtml({ content: ' ' }), /正文为空/)
+})
+
+test('HTML report charts are embedded as offline images and invalid charts retain their source', () => {
+  const option = { xAxis: { type: 'category', data: ['周一', '周二'] }, yAxis: { type: 'value' }, series: [{ type: 'line', data: [1, 2] }] }
+  const html = buildReportHtml({ title: '图表报告', content: '```echarts\n' + JSON.stringify(option) + '\n```\n\n```echarts\n{"series": "<script>"}\n```' })
+  assert.match(html, /data-chart-status="exported"/)
+  const svg = html.match(/src="data:image\/svg\+xml;charset=utf-8,([^"]+)"/)
+  assert.ok(svg, 'chart must be embedded in the document')
+  assert.match(decodeURIComponent(svg[1]), /<svg/)
+  assert.match(html, /data-chart-status="unavailable"/)
+  assert.match(html, /已保留原始配置/)
+  assert.ok(!/<script\b/i.test(html))
+  assert.equal(reportDownloadName('持仓/概况:报告? ', 'html'), '持仓_概况_报告_.html')
+  assert.equal(reportDownloadName('...', 'html'), '报告.html')
+})
+
+test('sidebar width preferences validate persisted values and retain independent right panel sizes', () => {
+  assert.deepEqual(parsePanelWidths('broken'), { left: null, reports: null, subagent: null })
+  assert.deepEqual(parsePanelWidths('null'), { left: null, reports: null, subagent: null })
+  assert.deepEqual(parsePanelWidths('{"left":9999,"reports":1,"subagent":"500"}'), { left: 420, reports: 320, subagent: null })
+  const preferences = parsePanelWidths('{"left":300,"reports":380,"subagent":560}')
+  assert.equal(panelLayout(1400, 1600, 'reports', preferences).right, 380)
+  assert.equal(panelLayout(1400, 1600, 'subagent', preferences).right, 560)
+})
+
+test('sidebar layout keeps room for chat and switches to overlays on small viewports or containers', () => {
+  assert.equal(panelLayout(1240, 1440, '').left, 268)
+  const both = panelLayout(1240, 1440, 'reports', { left: 420, reports: 720 })
+  assert.equal(both.left + both.right, 920)
+  assert.ok(1240 - both.left - both.right >= 320)
+  assert.equal(both.rightMax, 500)
+  const narrow = panelLayout(800, 1440, 'reports', { left: 420, reports: 720 })
+  assert.equal(narrow.leftDocked, false)
+  assert.equal(narrow.rightDocked, true)
+  assert.ok(800 - narrow.right >= 320)
+  const mobile = panelLayout(390, 390, 'reports', { left: 420, reports: 720 })
+  assert.equal(mobile.leftDocked, false)
+  assert.equal(mobile.rightDocked, false)
+  const constrained = panelLayout(600, 1440, 'subagent')
+  assert.equal(constrained.rightDocked, false)
+  assert.equal(constrained.leftDocked, false)
+})
 
 test('personal list tools show query names and pagination without claiming records were added', () => {
   for (const [name, label] of [['stock_watchlist_list', '查看我的自选'], ['stock_position_list', '查看我的持仓'], ['todo_list', '查看待办清单']]) {
@@ -202,6 +268,36 @@ function createChatState() {
   const emit = event => instance.applyAgentEvent({ sessionId: 'session', ...event })
   return { instance, state, emit }
 }
+
+test('report sidebar permissions and subagent switching preserve conversation drafts', () => {
+  const { instance, state, emit } = createChatState()
+  instance.$store = { getters: { permissions: ['agent:chat:use'] } }
+  assert.equal(instance.canViewReports, false)
+  instance.$store.getters.permissions.push('agent:report:list')
+  assert.equal(instance.canViewReports, true)
+  instance.inputText = '保留草稿'
+  instance.selectedSubagentId = 'child'
+  instance.mobileSidebarOpen = true
+  instance.handleRichContentLayout = () => {}
+  Chat.watch.reportsOpen.call(instance, true)
+  assert.equal(instance.selectedSubagentId, '')
+  assert.equal(instance.mobileSidebarOpen, false)
+  assert.equal(instance.inputText, '保留草稿')
+  instance.reportsOpen = true
+  Chat.watch.selectedSubagentId.call(instance, 'child')
+  assert.equal(instance.reportsOpen, false)
+  let refreshes = 0
+  instance.$refs.reportCenter = { load(quiet) { assert.equal(quiet, true); refreshes++ } }
+  emit({ type: 'agent_end' })
+  assert.equal(refreshes, 1)
+  assert.equal(state.isStreaming, false)
+})
+
+test('a saved report task with an unready executor is not shown as scheduled to run', () => {
+  const preview = toolPreview({ name: 'report_task_create', status: 'done', output: JSON.stringify({ taskId: 'saved', title: '周报', executionReady: false, nextRunAt: Date.now() + 86400000 }) })
+  assert.match(preview, /已保存，待执行器就绪/)
+  assert.ok(!preview.includes('下次'))
+})
 
 test('image-only send, rejection, retry and resized image confirmation preserve one user bubble', () => {
   const { instance, state } = createChatState()

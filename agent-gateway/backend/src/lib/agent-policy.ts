@@ -7,6 +7,12 @@ export const RESEARCH_SUBAGENT_ID = "web-researcher";
 export const SCREENER_SUBAGENT_ID = "stock-screener";
 export const PORTFOLIO_SUBAGENT_ID = "stock-portfolio";
 export const TODO_SUBAGENT_ID = "todo-recorder";
+export const REPORT_SUBAGENT_ID = "report-manager";
+export const REPORT_TOOLS = ["report_clock", "report_task_list", "report_task_get", "report_task_create", "report_task_update", "report_task_status", "report_task_delete", "report_task_run", "report_list", "report_get", "report_delete"];
+export const REPORT_PERMISSIONS: PermissionRule[] = [
+  { action: "*", resource: "*", effect: "deny" },
+  ...REPORT_TOOLS.map((action): PermissionRule => ({ action, resource: "*", effect: "allow" })),
+];
 export const PRIMARY_TOOLS = ["Agent"];
 export const STOCK_TOOLS = ["stock_search", "stock_quote", "stock_kline", "stock_analyze"];
 export const STOCK_SKILLS = ["stock-520"];
@@ -46,6 +52,7 @@ export const SUBAGENT_POLICIES = [
   { id: SCREENER_SUBAGENT_ID, tools: SCREENER_TOOLS, skills: SCREENER_SKILLS, permissions: SCREENER_PERMISSIONS },
   { id: PORTFOLIO_SUBAGENT_ID, tools: PORTFOLIO_TOOLS, skills: PORTFOLIO_SKILLS, permissions: PORTFOLIO_PERMISSIONS },
   { id: TODO_SUBAGENT_ID, tools: TODO_TOOLS, skills: TODO_SKILLS, permissions: TODO_PERMISSIONS },
+  { id: REPORT_SUBAGENT_ID, tools: REPORT_TOOLS, skills: [], permissions: REPORT_PERMISSIONS },
 ];
 export const PRIMARY_PERMISSIONS: PermissionRule[] = [
   ...STOCK_PERMISSIONS,
@@ -53,5 +60,6 @@ export const PRIMARY_PERMISSIONS: PermissionRule[] = [
   ...SCREENER_TOOLS.map((action): PermissionRule => ({ action, resource: "*", effect: "allow" })),
   ...PORTFOLIO_TOOLS.map((action): PermissionRule => ({ action, resource: "*", effect: "allow" })),
   ...TODO_TOOLS.map((action): PermissionRule => ({ action, resource: "*", effect: "allow" })),
+  ...REPORT_TOOLS.map((action): PermissionRule => ({ action, resource: "*", effect: "allow" })),
   { action: "Agent", resource: "*", effect: "allow" },
 ];
