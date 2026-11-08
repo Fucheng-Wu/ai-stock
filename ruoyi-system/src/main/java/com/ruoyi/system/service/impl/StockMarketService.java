@@ -41,8 +41,8 @@ public class StockMarketService
         if (target.isAfter(LocalDate.now(StockMarketRepository.ZONE))) throw new ServiceException("不能同步未来行情");
         try (StockMarketRepository.PipelineLock ignored = repository.lock())
         {
-            Map<String, Object> latest = repository.latestSync(null);
-            if (latest != null && day(latest.get("trade_date")).isAfter(target)) throw new ServiceException("不能用旧日期覆盖较新的复权基准；历史数据请使用迁移程序");
+            LocalDate latest = repository.latestPriceBasis();
+            if (latest != null && latest.isAfter(target)) throw new ServiceException("不能用旧日期覆盖较新的复权基准；历史数据请使用迁移程序");
             String run = UUID.randomUUID().toString().replace("-", "");
             repository.beginSync(run, target);
             ExecutorService pool = null;
@@ -82,7 +82,7 @@ public class StockMarketService
                     if (i % 100 == 0) log.info("行情同步 {}：{}/{}，失败{}", target, i, securities.size(), failures);
                     if (consecutive >= 8) { tasks.forEach(task -> task.cancel(true)); throw new ServiceException("连续8只股票同步失败，已停止后续请求；请检查行情源并补跑"); }
                 }
-                if (failures > 0) throw new ServiceException("当日行情有" + failures + "只同步失败，批次不可用于17点筛选；请补跑");
+                if (failures > 0) throw new ServiceException("当日行情有" + failures + "只同步失败，批次不可用于筛选；请补跑行情同步任务");
                 repository.finishSync(run, "COMPLETE", null);
                 log.info("全市场行情同步完成 {}，股票{}只", target, securities.size());
             }
@@ -109,9 +109,10 @@ public class StockMarketService
     {
         try (StockMarketRepository.PipelineLock ignored = repository.lock())
         {
-            Map<String, Object> sync = repository.latestSync(target), latest = repository.latestSync(null);
-            if (sync == null || !"COMPLETE".equals(sync.get("status"))) throw new ServiceException(target + "行情批次尚未完成，拒绝使用昨日数据；请先完成或补跑16点任务");
-            if (latest != null && day(latest.get("trade_date")).isAfter(target)) throw new ServiceException("复权数据已更新到更晚日期，请查询已保存的历史筛选结果，不回算旧日期");
+            Map<String, Object> sync = repository.latestSync(target);
+            LocalDate latest = repository.latestPriceBasis();
+            if (sync == null || !"COMPLETE".equals(sync.get("status"))) throw new ServiceException(target + "行情批次尚未完成，拒绝使用昨日数据；请先完成或补跑行情同步任务");
+            if (latest != null && latest.isAfter(target)) throw new ServiceException("复权数据已更新到更晚日期，请查询已保存的历史筛选结果，不回算旧日期");
             String sourceId = String.valueOf(sync.get("run_id"));
             List<Map<String, Object>> securities = repository.universe(sourceId);
             if (securities.size() != ((Number) sync.get("expected_count")).intValue() || securities.isEmpty()) throw new ServiceException("行情股票清单覆盖数量不一致");

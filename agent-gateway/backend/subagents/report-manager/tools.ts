@@ -7,11 +7,15 @@ const version = Type.Integer({ minimum: 1, description: "最近查询返回的ve
 const fields = {
   title: Type.String({ minLength: 1, maxLength: 100 }),
   prompt: Type.String({ minLength: 1, maxLength: 5000, description: "每次运行应完成的完整报告要求；保留本周/今日等相对执行日期要求，不写入凭证。" }),
-  scheduleType: Type.Union([Type.Literal("once"), Type.Literal("daily"), Type.Literal("weekly")]),
+  scheduleType: Type.Union([Type.Literal("once"), Type.Literal("daily"), Type.Literal("workday"), Type.Literal("holiday"), Type.Literal("workweek"), Type.Literal("custom"), Type.Literal("weekly")], {
+    description: "once仅一次；daily每天；workday中国大陆法定工作日（含调休补班）；holiday节假日及周末（排除补班）；workweek固定单双休工作日；custom自定义星期多选；weekly仅兼容旧每周单日规则。",
+  }),
   runAt: Type.Optional(Type.String({ description: "once必填，无时区后缀的北京时间YYYY-MM-DDTHH:mm:ss，必须为未来时间。" })),
-  hour: Type.Optional(Type.Integer({ minimum: 0, maximum: 23, description: "daily/weekly必填，北京时间小时。" })),
-  minute: Type.Optional(Type.Integer({ minimum: 0, maximum: 59, description: "daily/weekly必填，分钟。" })),
+  hour: Type.Optional(Type.Integer({ minimum: 0, maximum: 23, description: "所有重复规则必填，北京时间小时。" })),
+  minute: Type.Optional(Type.Integer({ minimum: 0, maximum: 59, description: "所有重复规则必填，分钟。" })),
   weekDay: Type.Optional(Type.Integer({ minimum: 1, maximum: 7, description: "weekly必填，1周一、6周六、7周日。" })),
+  weekDays: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 7 }), { minItems: 1, maxItems: 7, uniqueItems: true, description: "custom必填，至少选择一天，1周一至7周日，例如每周一三五为[1,3,5]；按星期重复，不随调休变化。" })),
+  workweek: Type.Optional(Type.Union([Type.Literal("single"), Type.Literal("double")], { description: "workweek必填：single单休，周一至周六执行；double双休，周一至周五执行。固定每周，不随节假日调休变化。用户未说明单休/双休时先询问。" })),
 };
 const listFields = {
   kind: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("once"), Type.Literal("recurring")])),
@@ -42,7 +46,7 @@ export function createReportToolsExtension(): ExtensionFactory {
       pi.registerTool(defineTool({ name, label, description: `${label}，只能使用列表返回的ID。`, parameters: Type.Object({ id }, { additionalProperties: false }),
         execute: async (_id, params, signal) => result(await request(`${path}${validId(params.id)}`, "agent:report:list", signal)) }));
     }
-    pi.registerTool(defineTool({ name: "report_task_create", label: "创建报告任务", description: "用户明确要求到点生成报告时保存一次性/每日/每周任务，执行器未配置也可保存。先读取北京时间；缺少时间或要求则询问，不猜测。返回executionReady=false时只说明任务已保存及executionMessage，不能承诺按时执行。结果未知先查询核实。",
+    pi.registerTool(defineTool({ name: "report_task_create", label: "创建报告任务", description: "用户明确要求到点生成报告时保存仅一次/每天/法定工作日/节假日及周末/单双休工作日/自定义星期任务，执行器未配置也可保存。先读取北京时间；缺少时间或要求则询问，不猜测。返回scheduleMessage时说明待日历更新；executionReady=false时说明任务已保存及executionMessage，不能承诺按时执行。结果未知先查询核实。",
       parameters: Type.Object(fields, { additionalProperties: false }), executionMode: "sequential",
       execute: async (callId, params, signal) => {
         return result(await request("/tasks", "agent:report:add", signal, { ...params, requestKey: callId }, "POST"));

@@ -260,7 +260,7 @@ TAVILY_API_KEY=填写Tavily密钥
 管理页分别控制五个角色的启停，运行时配置文件仍为 `backend/subagents/settings.json`。
 
 全市场选股通过 `STOCK_API_BASE_URL` 调用 Java 鉴权接口读取 MySQL，接口失败不回退到本地文件。
-若依每天北京时间16点采集全市场双口径日线、17点筛选并保存完整规则证据，休市或采集失败不发布当日结果。
+若依每天北京时间21:30采集全市场双口径日线、23:00筛选并保存完整规则证据，休市或采集失败不发布当日结果。
 首次升级先迁移六张业务表及 sys_job.time_zone，再导入旧SQLite和结果，最后启动新版Java与网关。
 步骤见 `docs/deploy-stock-screener.md`，`STOCK_SCREEN_DATA_DIR` 已不用于正式查询。
 工具保持实际行情日期和 snapshotId，不把旧日线候选当作当天实时信号。

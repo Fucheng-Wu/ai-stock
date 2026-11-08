@@ -39,6 +39,17 @@ test("report creation needs only user permission without a worker key and preser
     assert.equal(JSON.parse(created.content[0].text).executionReady,false);
     assert.match(JSON.parse(created.content[0].text).executionMessage,/尚未配置/);
     assert.deepEqual(requests.at(-1), { path: "/agent/reports/tasks", method: "POST", body: { ...input, requestKey: "call-one" } });
+    let alarmId = 0;
+    for (const rule of [
+      { scheduleType: "workday" }, { scheduleType: "holiday" },
+      { scheduleType: "workweek", workweek: "single" }, { scheduleType: "workweek", workweek: "double" },
+      { scheduleType: "custom", weekDays: [1,3,5] },
+    ]) {
+      const payload = { title: "闹铃式报告", prompt: "生成报告", hour: 9, minute: 0, ...rule };
+      const callId = "alarm-" + ++alarmId;
+      await runWithWorkbenchToolToken("current-user-token", () => tools.get("report_task_create").execute(callId,payload));
+      assert.deepEqual(requests.at(-1)?.body, { ...payload, requestKey: callId });
+    }
     permission="agent:report:edit";
     await runWithWorkbenchToolToken("current-user-token", () => tools.get("report_task_update").execute("update",{ id: taskId,version: 2,...input }));
     assert.equal(requests.at(-1)?.method,"PUT"); assert.equal(requests.at(-1)?.body.version,2);

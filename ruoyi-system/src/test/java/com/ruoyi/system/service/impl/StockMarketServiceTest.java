@@ -91,4 +91,56 @@ class StockMarketServiceTest
         try (StockMarketRepository.PipelineLock ignored=repository.lock())
         { assertThrows(RuntimeException.class, () -> repository.lock()); }
     }
+    @Test void weekendSkippedRunsDoNotPreventFridayRecovery() throws Exception
+    {
+        LocalDate friday = LocalDate.of(2026, 11, 6);
+        source.fail = true; assertThrows(Exception.class, () -> service.sync(friday));
+        service.sync(friday.plusDays(1)); service.sync(friday.plusDays(2));
+        assertEquals("SKIPPED", repository.latestSync(null).get("status"));
+        source.fail = false; service.sync(friday);
+        assertEquals("COMPLETE", repository.latestSync(friday).get("status"));
+        service.sync(friday.plusDays(2));
+        assertNotNull(service.screen(friday), "a later skipped batch contains no newer price basis");
+    }
+    @Test void actualNewerPricesStillPreventOldDateWritesAndScreening() throws Exception
+    {
+        service.sync(date); service.sync(date.plusDays(1));
+        assertEquals(date.plusDays(1), repository.latestPriceBasis());
+        assertThrows(Exception.class, () -> service.sync(date));
+        assertThrows(Exception.class, () -> service.screen(date));
+    }
+    @Test void laterPartialFailureStillPreventsOverwritingItsNewerPriceBasis() throws Exception
+    {
+        service.sync(date); source.fail = true;
+        assertThrows(Exception.class, () -> service.sync(date.plusDays(1)));
+        assertEquals("FAILED", repository.latestSync(null).get("status"));
+        assertEquals(date.plusDays(1), repository.latestPriceBasis());
+        assertThrows(Exception.class, () -> service.sync(date));
+        assertThrows(Exception.class, () -> service.screen(date));
+    }
+    @Test void lateCloseMigrationIsIdempotentAndPreservesPausedJobs() throws Exception
+    {
+        jdbc.execute("CREATE TABLE sys_job (job_id BIGINT AUTO_INCREMENT PRIMARY KEY,job_name VARCHAR(100),job_group VARCHAR(64),invoke_target VARCHAR(255),cron_expression VARCHAR(255),misfire_policy VARCHAR(8),concurrent VARCHAR(8),status VARCHAR(8),create_by VARCHAR(64),create_time DATETIME,update_by VARCHAR(64),update_time DATETIME,remark VARCHAR(1000))");
+        Path root = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+        while (!Files.exists(root.resolve("sql/stock_market_jobs.sql"))) root = root.getParent();
+        String install = Files.readString(root.resolve("sql/stock_market_jobs.sql")).replaceAll("(?m)^--.*$", "");
+        executeScript(install);
+        jdbc.update("UPDATE sys_job SET cron_expression='0 0 17 * * ?',status='1' WHERE invoke_target='stockMarketTask.syncDaily()'");
+        String upgrade = Files.readString(root.resolve("sql/stock_market_jobs_late_close.sql")).replaceAll("(?m)^--.*$", "");
+        for (int i = 0; i < 2; i++) executeScript(upgrade);
+        assertEquals(2L, jdbc.queryForObject("SELECT COUNT(*) FROM sys_job", Long.class));
+        assertEquals("0 30 21 * * ?", jdbc.queryForObject("SELECT cron_expression FROM sys_job WHERE invoke_target='stockMarketTask.syncDaily()'", String.class));
+        assertEquals("1", jdbc.queryForObject("SELECT status FROM sys_job WHERE invoke_target='stockMarketTask.syncDaily()'", String.class));
+        assertEquals("0 0 23 * * ?", jdbc.queryForObject("SELECT cron_expression FROM sys_job WHERE invoke_target='stockMarketTask.screenDaily()'", String.class));
+        assertEquals(2L, jdbc.queryForObject("SELECT COUNT(*) FROM sys_job WHERE time_zone='Asia/Shanghai'", Long.class));
+    }
+    private void executeScript(String script)
+    {
+        // PREPARE and session variables must use the same connection, like a mysql client.
+        jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {
+            try (var statement = connection.createStatement())
+            { for (String sql : script.split(";")) if (!sql.isBlank()) statement.execute(sql); }
+            return null;
+        });
+    }
 }

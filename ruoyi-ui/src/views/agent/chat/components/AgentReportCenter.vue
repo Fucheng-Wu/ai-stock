@@ -52,7 +52,7 @@
         <div v-else class="report-task-list">
           <article v-for="task in rows" :key="task.taskId" class="report-task">
             <div class="report-task__icon"><i :class="task.scheduleType === 'once' ? 'el-icon-date' : 'el-icon-alarm-clock'" /></div>
-            <div class="report-task__body"><div class="report-task__title"><h3>{{ task.title }}</h3><el-tag size="mini" :type="taskWaiting(task) ? 'warning' : statusType(task.status)">{{ taskWaiting(task) ? '待执行器就绪' : statusLabel(task.status) }}</el-tag></div><p class="report-task__prompt">{{ task.prompt }}</p><p class="report-task__schedule"><span>{{ scheduleLabel(task) }}</span><span>{{ taskWaiting(task) ? '已保存计划：' : '下次执行：' }}{{ task.status === 'paused' ? '已暂停' : task.nextRunAt ? formatTime(task.nextRunAt) : '无后续计划' }}</span></p><p v-if="taskWaiting(task)" class="report-task__waiting"><i class="el-icon-warning-outline" /> {{ task.executionMessage }}</p></div>
+            <div class="report-task__body"><div class="report-task__title"><h3>{{ task.title }}</h3><el-tag size="mini" :type="taskWaiting(task) || task.scheduleMessage ? 'warning' : statusType(task.status)">{{ task.status === 'paused' ? '已暂停' : task.scheduleMessage ? '待日历更新' : taskWaiting(task) ? '待执行器就绪' : statusLabel(task.status) }}</el-tag></div><p class="report-task__prompt">{{ task.prompt }}</p><p class="report-task__schedule"><span>{{ scheduleLabel(task) }}</span><span>{{ taskWaiting(task) ? '已保存计划：' : '下次执行：' }}{{ task.status === 'paused' ? '已暂停' : task.nextRunAt ? formatTime(task.nextRunAt) : task.scheduleMessage ? '等待日历更新' : '无后续计划' }}</span></p><p v-if="task.scheduleMessage" class="report-task__waiting"><i class="el-icon-warning-outline" /> {{ task.scheduleMessage }}</p><p v-if="taskWaiting(task)" class="report-task__waiting"><i class="el-icon-warning-outline" /> {{ task.executionMessage }}</p></div>
             <div class="report-task__actions">
               <el-button v-hasPermi="['agent:report:edit']" type="text" :disabled="!!actionId" @click="openEdit(task)">编辑</el-button>
               <el-dropdown trigger="click" @command="action => taskAction(action, task)">
@@ -75,19 +75,22 @@
       <el-form ref="form" :model="form" :rules="rules" label-position="top">
         <el-form-item label="报告标题" prop="title"><el-input v-model="form.title" maxlength="100" show-word-limit placeholder="例如：每周股市趋势观察" /></el-form-item>
         <el-form-item label="报告要求" prop="prompt"><el-input v-model="form.prompt" type="textarea" :rows="5" maxlength="5000" show-word-limit placeholder="描述希望关注的市场、股票和分析内容。例如：查询我的最新持仓，汇总今日涨跌、重要消息、520指标及风险，注明行情时间与来源。" /></el-form-item>
-        <el-form-item label="执行频率" prop="scheduleType"><el-radio-group v-model="form.scheduleType"><el-radio-button label="once">一次性</el-radio-button><el-radio-button label="daily">每天</el-radio-button><el-radio-button label="weekly">每周</el-radio-button></el-radio-group></el-form-item>
+        <el-form-item label="重复" prop="scheduleType"><el-radio-group v-model="form.scheduleType" class="report-repeat-options" @change="clearScheduleValidation"><el-radio-button v-for="option in repeatOptions" :key="option.value" :label="option.value">{{ option.label }}</el-radio-button></el-radio-group></el-form-item>
         <el-form-item v-if="form.scheduleType === 'once'" label="执行时间（北京时间）" prop="runAt"><el-date-picker v-model="form.runAt" :popper-class="popupClass" type="datetime" format="yyyy-MM-dd HH:mm" value-format="yyyy-MM-dd'T'HH:mm:ss" placeholder="选择未来的日期和时间" /></el-form-item>
         <div v-else class="report-time-fields">
-          <el-form-item v-if="form.scheduleType === 'weekly'" label="星期" prop="weekDay"><el-select v-model="form.weekDay" :popper-class="popupClass"><el-option v-for="(label, index) in weekDays" :key="index" :label="label" :value="index + 1" /></el-select></el-form-item>
           <el-form-item label="时间（北京时间）" prop="time"><el-time-picker v-model="form.time" :popper-class="popupClass" format="HH:mm" value-format="HH:mm" placeholder="选择时间" /></el-form-item>
         </div>
+        <el-form-item v-if="form.scheduleType === 'workweek'" label="休息方式" prop="workweek"><el-radio-group v-model="form.workweek" class="report-workweek-options"><el-radio label="single">单休（周一至周六执行）</el-radio><el-radio label="double">双休（周一至周五执行）</el-radio></el-radio-group></el-form-item>
+        <el-form-item v-if="form.scheduleType === 'custom'" label="选择星期（可多选）" prop="weekDays"><el-checkbox-group v-model="form.weekDays" class="report-weekdays"><el-checkbox-button v-for="(label, index) in weekDays" :key="index" :label="index + 1">{{ label.slice(2) }}</el-checkbox-button></el-checkbox-group></el-form-item>
+        <p v-if="form.scheduleType === 'workday' || form.scheduleType === 'holiday'" class="report-form-note">{{ form.scheduleType === 'workday' ? '按中国大陆放假调休安排执行：跳过假期，包含周末补班日。' : '在放假日和普通周末执行，跳过调休补班日。' }}日历覆盖{{ calendarYearsLabel }}；未覆盖的年份等待日历更新。</p>
+        <p v-if="form.scheduleType === 'workweek' || form.scheduleType === 'custom'" class="report-form-note">每周按所选星期重复，不随节假日或调休变化。</p>
       </el-form>
       <p class="report-form-note">报告自动保存在此页面。持仓在每次执行时重新查询；编辑从下次执行生效。</p>
       <span slot="footer"><el-button @click="formVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">{{ form.taskId ? '保存修改' : '创建任务' }}</el-button></span>
     </el-dialog>
 
     <el-dialog title="任务详情" :visible.sync="taskVisible" width="650px" custom-class="report-form-dialog" :modal-append-to-body="false">
-      <template v-if="taskDetail"><h3>{{ taskDetail.title }}</h3><p>{{ scheduleLabel(taskDetail) }} · 北京时间</p><p class="report-id">ID：{{ taskDetail.taskId }}</p><p class="report-task-detail">{{ taskDetail.prompt }}</p></template>
+      <template v-if="taskDetail"><h3>{{ taskDetail.title }}</h3><p>{{ scheduleLabel(taskDetail) }} · 北京时间</p><p v-if="taskDetail.scheduleMessage" class="report-task__waiting">{{ taskDetail.scheduleMessage }}</p><p class="report-id">ID：{{ taskDetail.taskId }}</p><p class="report-task-detail">{{ taskDetail.prompt }}</p></template>
     </el-dialog>
 
     <section v-if="readerVisible" class="report-reader" aria-label="报告阅读">
@@ -110,9 +113,10 @@
 import { getReportHealth, listReportTasks, getReportTask, createReportTask, updateReportTask, changeReportTaskStatus, deleteReportTask, runReportTask, listReports, getReport, deleteReport } from '@/api/agent/reports'
 import AgentMarkdown from './AgentMarkdown.vue'
 import { buildReportHtml, reportDownloadName } from '@/utils/agent-report-export'
+import { REPORT_REPEAT_OPTIONS, REPORT_WEEK_DAYS, reportScheduleLabel, reportScheduleForm, reportSchedulePayload } from '@/utils/agent-report-schedule'
 
 function requestKey() { return 'report-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) }
-const emptyForm = () => ({ taskId: null, title: '', prompt: '', scheduleType: 'once', runAt: '', weekDay: 6, time: '09:00', version: null, requestKey: requestKey() })
+const emptyForm = () => ({ taskId: null, title: '', prompt: '', scheduleType: 'once', runAt: '', weekDays: [], workweek: 'double', time: '09:00', version: null, requestKey: requestKey() })
 export default {
   name: 'AgentReportCenter',
   inject: { agentAppearance: { default: null } },
@@ -121,7 +125,7 @@ export default {
     return {
       view: 'reports', kind: 'all', keyword: '', page: 1, total: 0, rows: [], loading: false, loadError: false,
       kinds: [{ value: 'all', label: '全部' }, { value: 'once', label: '一次性报告' }, { value: 'recurring', label: '定时报告' }],
-      weekDays: ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'],
+      weekDays: REPORT_WEEK_DAYS, repeatOptions: REPORT_REPEAT_OPTIONS,
       formVisible: false, saving: false, form: emptyForm(), actionId: null, taskVisible: false, taskDetail: null,
       readerVisible: false, selectedReport: null, reading: false, readerError: '', refreshTimer: null, loadSequence: 0, readSequence: 0,
       health: null, exportingHtml: false,
@@ -130,7 +134,8 @@ export default {
         prompt: [{ required: true, whitespace: true, message: '请输入报告要求', trigger: 'blur' }],
         runAt: [{ required: true, message: '请选择执行时间', trigger: 'change' }],
         time: [{ required: true, message: '请选择时间', trigger: 'change' }],
-        weekDay: [{ required: true, message: '请选择星期', trigger: 'change' }]
+        weekDays: [{ type: 'array', required: true, min: 1, message: '请至少选择一个星期', trigger: 'change' }],
+        workweek: [{ required: true, message: '请选择单休或双休', trigger: 'change' }]
       }
     }
   },
@@ -140,7 +145,8 @@ export default {
     overlayClass() { return 'agent-report-overlay' + (this.isDark ? ' is-dark' : '') },
     canEdit() { const p = this.$store.getters.permissions; return p.includes('*:*:*') || p.includes('agent:report:edit') },
     canRemove() { const p = this.$store.getters.permissions; return p.includes('*:*:*') || p.includes('agent:report:remove') },
-    workerOnline() { return this.health && this.health.configured && this.health.lastSeenAt > Date.now() - 120000 }
+    workerOnline() { return this.health && this.health.configured && this.health.lastSeenAt > Date.now() - 120000 },
+    calendarYearsLabel() { return this.health && this.health.calendarYears ? this.health.calendarYears.join('、') + '年' : '以服务端配置为准' }
   },
   activated() { this.startRefresh() },
   mounted() { this.startRefresh() },
@@ -179,16 +185,13 @@ export default {
     statusLabel(status) { return { enabled: '已启用', paused: '已暂停', completed: '已触发', queued: '等待生成', running: '正在生成', succeeded: '已完成', failed: '生成失败', cancelled: '已取消' }[status] || status },
     statusType(status) { return { enabled: 'success', paused: 'info', completed: 'info', queued: 'warning', running: '', succeeded: 'success', failed: 'danger', cancelled: 'info' }[status] || '' },
     formatTime(value) { return value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(Number(value)) : '—' },
-    scheduleLabel(task) {
-      if (task.scheduleType === 'once') return '一次性 · ' + (task.runAt || '').replace('T', ' ').slice(0, 16)
-      const time = String(task.hour).padStart(2, '0') + ':' + String(task.minute).padStart(2, '0')
-      return (task.scheduleType === 'weekly' ? '每' + this.weekDays[task.weekDay - 1] : '每天') + ' ' + time
-    },
+    scheduleLabel: reportScheduleLabel,
+    clearScheduleValidation() { this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate()) },
     openCreate() { this.form = emptyForm(); this.formVisible = true; this.$nextTick(() => this.$refs.form.clearValidate()) },
     async openEdit(task) {
       try {
         const { data } = await getReportTask(task.taskId)
-        this.form = { ...emptyForm(), ...data, time: String(data.hour == null ? 9 : data.hour).padStart(2, '0') + ':' + String(data.minute || 0).padStart(2, '0') }
+        this.form = { ...emptyForm(), ...reportScheduleForm(data) }
         this.formVisible = true; this.$nextTick(() => this.$refs.form.clearValidate())
       } catch (_) { /* request layer displays errors */ }
     },
@@ -196,12 +199,12 @@ export default {
       this.$refs.form.validate(async valid => {
         if (!valid || this.saving) return
         this.saving = true
-        const [hour, minute] = this.form.time.split(':').map(Number)
-        const data = { title: this.form.title.trim(), prompt: this.form.prompt.trim(), scheduleType: this.form.scheduleType, runAt: this.form.scheduleType === 'once' ? this.form.runAt : null, hour, minute, weekDay: this.form.weekDay, version: this.form.version, requestKey: this.form.requestKey }
+        const data = reportSchedulePayload(this.form)
         try {
           const response = this.form.taskId ? await updateReportTask(this.form.taskId, data) : await createReportTask(data)
           this.formVisible = false
-          if (response.data && response.data.executionReady === false) this.$message.warning('任务已保存，执行器尚未就绪，暂不能执行')
+          if (response.data && response.data.scheduleMessage) this.$message.warning(response.data.scheduleMessage)
+          else if (response.data && response.data.executionReady === false) this.$message.warning('任务已保存，执行器尚未就绪，暂不能执行')
           else this.$message.success('任务已保存，时间按北京时间执行')
           this.switchView('tasks')
         } catch (_) { /* preserve form and requestKey for recovery */ }
@@ -298,6 +301,10 @@ export default {
 .reports-empty { flex: 1; padding: 40px 10px; text-align: center; > i { display: block; font-size: 32px; color: var(--agent-subtle, #9ca3af); opacity: .6; } h3 { font-size: 14px; font-weight: 500; margin: 18px 0 12px; } p { color: var(--agent-muted, #6b7280); font-size: 11px; line-height: 1.9; } }
 .reports-pagination { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--agent-line, #e5e7eb); > span { flex-shrink: 0; font-size: 10px; color: var(--agent-subtle, #9ca3af); } ::v-deep .el-pagination { padding: 0; button, li { min-width: 23px; color: var(--agent-muted, #6b7280); background: transparent; } .active { color: var(--agent-link, #4d6bfe); } } }
 .report-time-fields { display: flex; gap: 20px; .el-form-item { flex: 1; min-width: 0; } .el-select,.el-date-editor { width: 100%; } }
+.report-repeat-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; ::v-deep .el-radio-button__inner { width: 100%; border: 1px solid var(--agent-line, #e5e7eb); border-radius: 7px !important; box-shadow: none !important; padding: 11px 5px; } }
+.report-workweek-options { display: flex; flex-wrap: wrap; gap: 14px; ::v-deep .el-radio { margin-right: 0; color: var(--agent-text, #374151); } }
+.report-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; ::v-deep .el-checkbox-button__inner { width: 100%; padding: 10px 0; border: 1px solid var(--agent-line, #e5e7eb); border-radius: 6px !important; box-shadow: none !important; } }
+.is-dark .report-weekdays { ::v-deep .el-checkbox-button__inner { background: var(--agent-surface); color: var(--agent-muted); } ::v-deep .is-checked .el-checkbox-button__inner { background: var(--agent-solid-accent, #4d6bfe); color: #fff; } }
 .report-form-note { font-size: 12px; line-height: 1.8; color: var(--agent-subtle, #9ca3af); }
 .report-task-detail { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; color: var(--agent-text, #374151); }
 .report-id { font-size: 10px; color: var(--agent-subtle, #9ca3af); overflow-wrap: anywhere; }

@@ -21,8 +21,8 @@
 
 | 若依调用目标 | Cron | 固定时区 |
 |---|---|---|
-| stockMarketTask.syncDaily() | `0 0 16 * * ?` | Asia/Shanghai |
-| stockMarketTask.screenDaily() | `0 0 17 * * ?` | Asia/Shanghai |
+| stockMarketTask.syncDaily() | `0 30 21 * * ?` | Asia/Shanghai |
+| stockMarketTask.screenDaily() | `0 0 23 * * ?` | Asia/Shanghai |
 
 周末跳过。工作日必须能取得当天上证指数日线，否则记录未就绪/失败；这可能是节假日，
 也可能是接口延迟，程序不会用昨日行情冒充今日行情。筛选只接受当日最新一次同步尝试完整成功的批次。
@@ -33,10 +33,15 @@
 筛选只使用同一成功批次、同一复权基准的最近 80 根日线。均线与买点复用 Java 在线分析规则。
 已有历史筛选证据独立保存，不随新日线刷新而改变。
 
-默认 4 个线程、全局每 200ms 最多发起一个请求，失败重试最多 3 次。
+默认 4 个线程、全局每 200ms 最多发起一个请求，接口请求失败重试最多 3 次。
+双口径日期或成交量不一致时，间隔1秒、2秒重新获取完整的一对日线，最多3对；仍不一致则失败，
+日志及批次明细附带代码、日期和差异日期。不截取交集、不沿用旧前复权值、不把失败股票当作零候选。
 约 5,600 只股票、每只两个请求，理论采集至少约 38 分钟，实际耗时受网络影响。
 配置可选 `stock.market.workers`（1–8）和 `stock.market.request-interval-ms`（至少100），不要盲目提高请求速率。
-采集、筛选、迁移使用同一 MySQL 命名锁；若 17 点仍在采集，筛选失败并写日志，需要采集完成后补跑。
+采集、筛选、迁移使用同一 MySQL 命名锁；若 23 点仍在采集，筛选失败并写日志，需要采集完成后补跑。
+生产观察到17点腾讯前复权日线仍未齐，因此默认延后至21:30采集、23:00筛选；这是避开已观察到的延迟窗口，
+不保证免费源在该时刻一定就绪。已有环境的原任务不会被 `stock_market_jobs.sql` 覆盖，需停Java后执行
+`sql/stock_market_jobs_late_close.sql` 并重启，或在任务管理中保存新的Cron与Asia/Shanghai时区。
 停机错过触发不补执行，避免开机时同时抓取/筛选；任务默认启用、禁止自身并发。
 
 ## 本机打包
@@ -100,7 +105,7 @@ python3 -m venv .market-migrate-venv
 原 SQLite 与离线快照保持不变，已有快照 ID 继续可查询。若 MySQL 已更新到更晚日期，禁止用旧行情覆盖。
 初始基线：5,576 只、1,326,482 条日线、日期 2025-10-27 至 2026-10-26；候选 43 只。
 
-如果不迁移旧数据，可通过现有数据库管理工具执行两个 SQL，启动后手动执行一次 16 点同步任务，
+如果不迁移旧数据，可通过现有数据库管理工具执行两个 SQL，启动后手动执行一次行情同步任务，
 成功后再执行筛选任务；将从最近 300 根日线开始积累，不含本机一年历史的完整原始记录。
 
 ## 启动验收
@@ -123,7 +128,7 @@ sudo systemctl status ai-stock ai-stock-agent --no-pager
 在若依「系统监控 → 定时任务」查看两个新增任务（调用目标如上），状态应为正常。
 SQL 中 `time_zone` 应为 Asia/Shanghai；即使服务器使用 UTC 也按北京时间执行。
 前端旧的 Cron 预览不代表固定时区，请以调度记录与任务日志为准。
-当天错过 16 点，手动点击「执行一次」同步，完成后再手动执行筛选。
+当天错过21:30，手动点击「执行一次」同步，完成后再手动执行筛选。
 要对初始已导入日期重筛，可临时新增一次调用 `stockMarketTask.screenDate('2026-10-26')`，
 执行成功后删除该临时任务；若已更新到更晚复权基准，则查询保存的旧快照即可。
 
@@ -135,6 +140,34 @@ SQL 中 `time_zone` 应为 Asia/Shanghai；即使服务器使用 UTC 也按北�
 Java 接口：`GET /stock/screener/results`、`GET /stock/screener/detail`，均要求登录和股票分析权限。
 任务失败在「定时任务 → 日志」和 `journalctl -u ai-stock` 查看；按同步批次表查具体失败代码。
 未完成批次不会发布新结果，查询仍返回最近成功快照及真实日期，不会显示成今日已更新。
+
+## 上线后同步失败的恢复
+
+`InvocationTargetException` 是Quartz反射调用的包装异常，应查看日志最后的 `Caused by` 与同步明细。
+连续8只失败会停止批次；只要仍有股票失败，批次就不能发布为COMPLETE。不要手工修改批次状态。
+
+1. 部署新版Java前停服务，执行 `sql/stock_market_jobs_late_close.sql`，启动后核实21:30/23:00及时区。
+2. 跨日补跑使用临时暂停的任务，调用目标 `stockMarketTask.syncDate('2026-11-06')`，点击执行一次。
+   它与原任务使用同一把锁。确认下面查询的最新一条该日批次为COMPLETE且完成数等于预期数后，
+   再执行 `stockMarketTask.screenDate('2026-11-06')`。结束后删除临时任务，不改原每日任务的调用目标。
+3. `syncDaily()` 永远取当前北京时间的日期，11月8日调用会跳过周末，不能补11月6日。
+   周末SKIPPED或未写入价格的失败批次不阻止补跑；实际写入了更晚复权基准时仍拒绝旧日同步/筛选，
+   包括后来只写入部分股票的失败批次。此时查询已保存的历史快照，不回写旧基准。
+
+```sql
+SELECT run_id,trade_date,status,expected_count,completed_count,failed_count,error_message
+FROM stock_market_sync_run WHERE trade_date='2026-11-06' ORDER BY id DESC LIMIT 5;
+
+SELECT symbol,status,error_message FROM stock_market_sync_item
+WHERE run_id=(SELECT run_id FROM stock_market_sync_run WHERE trade_date='2026-11-06' ORDER BY id DESC LIMIT 1)
+  AND status<>'COMPLETE' ORDER BY symbol LIMIT 30;
+
+SELECT snapshot_id,trade_date,status,universe_count,analyzed_count,excluded_count,error_message
+FROM stock_screen_run WHERE trade_date='2026-11-06' ORDER BY id DESC LIMIT 5;
+```
+
+验收以数据库COMPLETE状态及Agent返回的真实tradeDate为准。行情补跑可能耗时一小时以上，
+等待它结束再筛选；若再次失败，依据差异日期判断源是否仍未更新，稍后明确补跑，不提高请求频率。
 
 ## 回滚
 

@@ -3,6 +3,8 @@ package com.ruoyi.system.service.support;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -14,6 +16,7 @@ import com.alibaba.fastjson2.*;
 @Component
 public class TencentStockMarketSource implements StockMarketSource
 {
+    private static final Logger log = LoggerFactory.getLogger(TencentStockMarketSource.class);
     private static final String SINA = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/";
     private static final String TENCENT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get";
     private final RestTemplate http;
@@ -88,7 +91,7 @@ public class TencentStockMarketSource implements StockMarketSource
         return new ArrayList<>(result.values());
     }
 
-    private Map<LocalDate, double[]> series(String symbol, LocalDate target, int limit, boolean adjusted)
+    protected Map<LocalDate, double[]> series(String symbol, LocalDate target, int limit, boolean adjusted)
     {
         JSONObject payload = (JSONObject) request(TENCENT, Map.of("param", symbol + ",day," + target.minusYears(3) + "," + target + "," + limit + "," + (adjusted ? "qfq" : "")));
         return parseSeries(payload, symbol, target, adjusted);
@@ -130,15 +133,42 @@ public class TencentStockMarketSource implements StockMarketSource
 
     @Override public List<Bar> history(String symbol, LocalDate target, int limit)
     {
+        for (int attempt = 0; ; attempt++)
+        {
+            try { return pairedHistory(symbol, target, limit); }
+            catch (InconsistentHistoryException e)
+            {
+                if (attempt >= 2) throw e;
+                log.warn("双口径日线暂不一致，将重新获取两份日线（{}/3）：{}", attempt + 1, e.getMessage());
+                pauseHistoryRetry(attempt);
+            }
+        }
+    }
+
+    protected void pauseHistoryRetry(int attempt) { pause(1000L << attempt); }
+
+    private List<Bar> pairedHistory(String symbol, LocalDate target, int limit)
+    {
         Map<LocalDate, double[]> raw = series(symbol, target, limit, false), qfq = series(symbol, target, limit, true);
-        if (raw.isEmpty() || !raw.keySet().equals(qfq.keySet())) throw new IllegalStateException("不复权与前复权日线日期不完整");
+        if (raw.isEmpty() || !raw.keySet().equals(qfq.keySet()))
+        {
+            Set<LocalDate> onlyRaw = new TreeSet<>(raw.keySet()), onlyQfq = new TreeSet<>(qfq.keySet());
+            onlyRaw.removeAll(qfq.keySet()); onlyQfq.removeAll(raw.keySet());
+            throw new InconsistentHistoryException(symbol + " " + target + " 不复权与前复权日线日期不完整：raw=" + raw.size()
+                + "，qfq=" + qfq.size() + "，仅不复权=" + onlyRaw.stream().limit(5).toList() + "，仅前复权=" + onlyQfq.stream().limit(5).toList());
+        }
         List<Bar> result = new ArrayList<>();
         for (LocalDate date : raw.keySet())
         {
             double[] r = raw.get(date), q = qfq.get(date);
-            if (r[4] != q[4]) throw new IllegalStateException("不复权与前复权成交量不一致");
+            if (r[4] != q[4]) throw new InconsistentHistoryException(symbol + " " + date + " 不复权与前复权成交量不一致");
             result.add(new Bar(date, r[0], r[1], r[2], r[3], q[0], q[1], q[2], q[3], (long) r[4]));
         }
         return result;
+    }
+
+    private static class InconsistentHistoryException extends IllegalStateException
+    {
+        InconsistentHistoryException(String message) { super(message); }
     }
 }

@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS agent_report_task (
  title varchar(100) NOT NULL, prompt text NOT NULL,
  schedule_type varchar(16) NOT NULL, run_at varchar(32) DEFAULT NULL,
  hour int DEFAULT NULL, minute int DEFAULT NULL, week_day int DEFAULT NULL,
+ week_days varchar(13) DEFAULT NULL, workweek varchar(8) DEFAULT NULL,
+ schedule_message varchar(255) DEFAULT NULL,
  status varchar(16) NOT NULL DEFAULT 'enabled', next_run_at bigint DEFAULT NULL,
  version int NOT NULL DEFAULT 1, request_key varchar(128) NOT NULL,
  deleted tinyint NOT NULL DEFAULT 0, created_at bigint NOT NULL, updated_at bigint NOT NULL,

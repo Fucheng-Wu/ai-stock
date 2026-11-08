@@ -56,6 +56,11 @@ public class StockMarketRepository
     }
 
     private static LocalDateTime now() { return LocalDateTime.now(ZONE); }
+    public LocalDate latestPriceBasis()
+    {
+        java.sql.Date date = jdbc.queryForObject("SELECT MAX(qfq_as_of_date) FROM stock_market_daily", java.sql.Date.class);
+        return date == null ? null : date.toLocalDate();
+    }
     public Map<String, Object> latestSync(LocalDate date)
     {
         List<Map<String, Object>> rows = date == null

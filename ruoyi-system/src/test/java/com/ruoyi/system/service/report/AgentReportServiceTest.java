@@ -1,6 +1,7 @@
 package com.ruoyi.system.service.report;
 
 import java.nio.file.*;
+import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
@@ -13,9 +14,11 @@ class AgentReportServiceTest
 {
     private JdbcTemplate jdbc;
     private AgentReportService service;
+    protected DriverManagerDataSource dataSource()
+    { return new DriverManagerDataSource("jdbc:h2:mem:reports_"+UUID.randomUUID()+";MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=HOUR,MINUTE","sa",""); }
     @BeforeEach void setup() throws Exception
     {
-        jdbc=new JdbcTemplate(new DriverManagerDataSource("jdbc:h2:mem:reports_"+UUID.randomUUID()+";MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=HOUR,MINUTE","sa",""));
+        jdbc=new JdbcTemplate(dataSource());
         jdbc.execute("CREATE TABLE sys_user(user_id bigint PRIMARY KEY)");
         jdbc.execute("INSERT INTO sys_user VALUES(42),(84)");
         Path root=Path.of(System.getProperty("user.dir")).toAbsolutePath();
@@ -29,6 +32,56 @@ class AgentReportServiceTest
     { return new ReportTaskInput("市场周报","分析本周趋势并注明来源","weekly",null,9,0,6,key,version); }
     private String create(String key) { return String.valueOf(service.create(42L,input(key,null)).get("taskId")); }
     private void due(String id) { jdbc.update("UPDATE agent_report_task SET next_run_at=? WHERE task_id=?",System.currentTimeMillis()-86400000*9L,id); }
+    @Test void legacyUnusedFieldsDoNotBreakIdempotentRetriesAfterUpgrade()
+    {
+        String at=Instant.ofEpochMilli(System.currentTimeMillis()+120000).atZone(ReportSchedule.ZONE).toLocalDateTime().withNano(0).toString();
+        ReportTaskInput once = new ReportTaskInput("旧一次性任务","今日概况","once",at,9,0,6,"legacy-once",null);
+        String id = (String)service.create(42L,once).get("taskId");
+        // Previous UI sent and persisted daily/weekly fields even for a once task.
+        jdbc.update("UPDATE agent_report_task SET hour=9,minute=0,week_day=6 WHERE task_id=?",id);
+        assertEquals(id,service.create(42L,once).get("taskId"));
+    }
+    @Test void customWeekdaysAndWorkweekRoundTripAndParticipateInIdempotency()
+    {
+        ReportTaskInput custom = new ReportTaskInput("自定义报告","按星期复盘","custom",null,9,0,null,"custom-key",null,List.of(5,1,3),null);
+        Map<String,Object> saved = service.create(42L,custom);
+        String id = (String)saved.get("taskId");
+        assertEquals(List.of(1,3,5),saved.get("weekDays"));
+        assertEquals(id,service.create(42L,new ReportTaskInput("自定义报告","按星期复盘","custom",null,9,0,null,"custom-key",null,List.of(1,3,5),null)).get("taskId"));
+        assertThrows(RuntimeException.class,() -> service.create(42L,new ReportTaskInput("自定义报告","按星期复盘","custom",null,9,0,null,"custom-key",null,List.of(1,5),null)));
+        Map<String,Object> updated = service.update(42L,id,new ReportTaskInput("自定义报告","按星期复盘","workweek",null,9,0,null,null,1,null,"single"));
+        assertEquals("single",updated.get("workweek")); assertNull(updated.get("weekDays"));
+        due(id); assertNotNull(service.claim());
+        assertNotNull(service.task(42L,id).get("nextRunAt"));
+        String other = (String)service.create(42L,new ReportTaskInput("单休","按星期复盘","workweek",null,9,0,null,"workweek-key",null,null,"single")).get("taskId");
+        assertThrows(RuntimeException.class,() -> service.create(42L,new ReportTaskInput("单休","按星期复盘","workweek",null,9,0,null,"workweek-key",null,null,"double")));
+        assertEquals("single",service.task(42L,other).get("workweek"));
+    }
+    @Test void missingCalendarPreservesTasksAndNeverBlocksTheLastKnownOccurrenceOrOtherJobs()
+    {
+        service = new AgentReportService(jdbc,Clock.fixed(Instant.parse("2027-12-31T00:00:00Z"),ZoneOffset.UTC));
+        Map<String,Object> saved = service.create(42L,new ReportTaskInput("工作日报","今日概况","workday",null,9,0,null,"last-calendar-day",null));
+        String id = (String)saved.get("taskId");
+        assertNotNull(saved.get("nextRunAt"));
+        service = new AgentReportService(jdbc,Clock.fixed(Instant.parse("2027-12-31T01:00:01Z"),ZoneOffset.UTC));
+        Map<String,Object> last = service.claim(); assertNotNull(last);
+        Map<String,Object> waiting = service.task(42L,id);
+        assertEquals("enabled",waiting.get("status")); assertNull(waiting.get("nextRunAt"));
+        assertTrue(waiting.get("scheduleMessage").toString().contains("2028"));
+        service.finish((String)last.get("runId"),(String)last.get("leaseToken"),"最后一个已配置工作日",null);
+        assertNull(service.claim());
+        assertEquals("succeeded",service.report(42L,(String)last.get("runId")).get("status"));
+        Map<String,Object> newWaiting = service.create(42L,new ReportTaskInput("休息日报","今日概况","holiday",null,9,0,null,"unknown-calendar",null));
+        assertNull(newWaiting.get("nextRunAt")); assertNotNull(newWaiting.get("scheduleMessage"));
+        service.create(42L,new ReportTaskInput("每日正常","今日概况","daily",null,9,1,null,"normal-daily",null));
+        jdbc.update("UPDATE agent_report_task SET next_run_at=? WHERE request_key='normal-daily'",Instant.parse("2027-12-31T01:00:00Z").toEpochMilli());
+        assertNotNull(service.claim(),"calendar-waiting tasks cannot starve other jobs");
+        // An updated calendar makes a pending task calculable again; no recreation required.
+        jdbc.update("UPDATE agent_report_task SET schedule_message='等待日历更新',next_run_at=NULL WHERE task_id=?",id);
+        service = new AgentReportService(jdbc,Clock.fixed(Instant.parse("2027-12-30T00:00:00Z"),ZoneOffset.UTC));
+        service.claim();
+        assertNotNull(service.task(42L,id).get("nextRunAt")); assertNull(service.task(42L,id).get("scheduleMessage"));
+    }
     @Test void creatingWithoutWorkerConfigurationSavesOwnedTasksAndReportsLiveReadiness() throws Exception
     {
         var key=AgentReportService.class.getDeclaredField("workerKey"); key.setAccessible(true);

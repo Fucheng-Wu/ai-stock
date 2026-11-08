@@ -1,12 +1,16 @@
 package com.ruoyi.system.service.report;
 
 import java.util.*;
+import java.time.Clock;
 import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.dao.PessimisticLockingFailureException;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.system.domain.report.ReportTaskInput;
 
@@ -15,25 +19,35 @@ import com.ruoyi.system.domain.report.ReportTaskInput;
 public class AgentReportService
 {
     private static final String TASK_FIELDS = "task_id AS taskId,title,prompt,schedule_type AS scheduleType,run_at AS runAt,"
-        + "hour,minute,week_day AS weekDay,status,next_run_at AS nextRunAt,version,created_at AS createdAt,updated_at AS updatedAt";
+        + "hour,minute,week_day AS weekDay,week_days AS weekDays,workweek,schedule_message AS scheduleMessage,"
+        + "status,next_run_at AS nextRunAt,version,created_at AS createdAt,updated_at AS updatedAt";
     private static final String RUN_FIELDS = "run_id AS runId,task_id AS taskId,title,schedule_type AS scheduleType,"
         + "trigger_type AS triggerType,status,scheduled_at AS scheduledAt,started_at AS startedAt,finished_at AS finishedAt,error";
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
+    private final TransactionTemplate claimTx;
+    private final Clock clock;
     @Value("${agent.report-worker-key:}") private String workerKey;
     private final AtomicLong lastWorkerContact = new AtomicLong();
 
-    public void workerContact() { lastWorkerContact.set(System.currentTimeMillis()); }
+    public void workerContact() { lastWorkerContact.set(clock.millis()); }
     public Map<String,Object> health()
-    { return Map.of("configured",workerKey != null && workerKey.length() >= 32,"lastSeenAt",lastWorkerContact.get(),"timeZone","Asia/Shanghai"); }
+    { return Map.of("configured",workerKey != null && workerKey.length() >= 32,"lastSeenAt",lastWorkerContact.get(),"timeZone","Asia/Shanghai","calendarYears",ReportHolidayCalendar.years()); }
 
     private void requireWorker()
     { if (workerKey == null || workerKey.length() < 32) throw new ServiceException("报告执行器尚未配置，请管理员设置AGENT_REPORT_WORKER_KEY后重试"); }
 
-    public AgentReportService(JdbcTemplate jdbc)
+    @Autowired
+    public AgentReportService(JdbcTemplate jdbc) { this(jdbc,Clock.systemUTC()); }
+
+    AgentReportService(JdbcTemplate jdbc, Clock clock)
     {
         this.jdbc = jdbc;
+        this.clock = clock;
         this.tx = new TransactionTemplate(new DataSourceTransactionManager(Objects.requireNonNull(jdbc.getDataSource())));
+        this.claimTx = new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
+        // Avoid queue range/gap locks at MySQL's default REPEATABLE READ level.
+        this.claimTx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     }
 
     public Map<String,Object> tasks(Long userId, String kind, String keyword, int page, int size)
@@ -71,8 +85,9 @@ public class AgentReportService
     /** Readiness is live executor health, separate from the user's saved schedule and pause state. */
     private Map<String,Object> withExecutionState(Map<String,Object> task)
     {
+        task.put("weekDays",decodeDays(task.get("weekDays")));
         boolean configured = workerKey != null && workerKey.length() >= 32;
-        boolean ready = configured && lastWorkerContact.get() > System.currentTimeMillis() - 120_000;
+        boolean ready = configured && lastWorkerContact.get() > clock.millis() - 120_000;
         task.put("executionReady",ready);
         task.put("executionMessage",ready ? "报告执行器在线" : configured
             ? "报告执行器尚未连接，暂不能确认按时执行，请管理员检查服务"
@@ -90,8 +105,9 @@ public class AgentReportService
         return rows.get(0);
     }
 
-    public Map<String,Object> create(Long userId, ReportTaskInput input)
+    public Map<String,Object> create(Long userId, ReportTaskInput raw)
     {
+        ReportTaskInput input = ReportSchedule.normalize(raw);
         validate(input);
         requireKey(input.requestKey());
         return tx.execute(status -> {
@@ -101,33 +117,35 @@ public class AgentReportService
             if (!existing.isEmpty())
             {
                 Map<String,Object> row = existing.get(0);
-                ReportTaskInput original = fromRow(row);
+                ReportTaskInput original = ReportSchedule.normalize(fromRow(row));
                 if (!Objects.equals(original.title(),input.title().trim()) || !Objects.equals(original.prompt(),input.prompt().trim())
                     || !Objects.equals(original.scheduleType(),input.scheduleType()) || !Objects.equals(original.runAt(),input.runAt())
-                    || !Objects.equals(original.hour(),input.hour()) || !Objects.equals(original.minute(),input.minute()) || !Objects.equals(original.weekDay(),input.weekDay()))
+                    || !Objects.equals(original.hour(),input.hour()) || !Objects.equals(original.minute(),input.minute()) || !Objects.equals(original.weekDay(),input.weekDay())
+                    || !Objects.equals(original.weekDays(),input.weekDays()) || !Objects.equals(original.workweek(),input.workweek()))
                     throw new ServiceException("该请求已创建过不同内容的任务，请先查询报告中心核实后再新建");
                 return task(userId, String.valueOf(row.get("task_id")));
             }
             if (jdbc.queryForObject("SELECT COUNT(*) FROM agent_report_task WHERE user_id=? AND deleted=0", Long.class, userId) >= 100)
                 throw new ServiceException("每个用户最多保留100个任务，请先删除不需要的任务");
-            long now = System.currentTimeMillis(); long next = ReportSchedule.next(input, now);
+            long now = clock.millis(); Plan plan = plan(input, now);
             String id = UUID.randomUUID().toString();
-            jdbc.update("INSERT INTO agent_report_task(task_id,user_id,title,prompt,schedule_type,run_at,hour,minute,week_day,status,next_run_at,request_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'enabled',?,?,?,?)",
-                id,userId,input.title().trim(),input.prompt().trim(),input.scheduleType(),input.runAt(),input.hour(),input.minute(),input.weekDay(),next,input.requestKey(),now,now);
+            jdbc.update("INSERT INTO agent_report_task(task_id,user_id,title,prompt,schedule_type,run_at,hour,minute,week_day,week_days,workweek,schedule_message,status,next_run_at,request_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'enabled',?,?,?,?)",
+                id,userId,input.title().trim(),input.prompt().trim(),input.scheduleType(),input.runAt(),input.hour(),input.minute(),input.weekDay(),encodeDays(input.weekDays()),input.workweek(),plan.message(),plan.next(),input.requestKey(),now,now);
             return task(userId,id);
         });
     }
 
-    public Map<String,Object> update(Long userId, String id, ReportTaskInput input)
+    public Map<String,Object> update(Long userId, String id, ReportTaskInput raw)
     {
+        ReportTaskInput input = ReportSchedule.normalize(raw);
         validate(input);
         return tx.execute(status -> {
             Map<String,Object> old = lockTask(userId,id);
             if (input.version() == null || ((Number) old.get("version")).intValue() != input.version())
                 throw new ServiceException("任务已发生变化，请重新查询后再修改");
-            long now = System.currentTimeMillis(); long next = ReportSchedule.next(input,now);
-            jdbc.update("UPDATE agent_report_task SET title=?,prompt=?,schedule_type=?,run_at=?,hour=?,minute=?,week_day=?,next_run_at=?,status=CASE WHEN status='paused' THEN 'paused' ELSE 'enabled' END,version=version+1,updated_at=? WHERE task_id=? AND user_id=?",
-                input.title().trim(),input.prompt().trim(),input.scheduleType(),input.runAt(),input.hour(),input.minute(),input.weekDay(),next,now,id,userId);
+            long now = clock.millis(); Plan plan = plan(input,now);
+            jdbc.update("UPDATE agent_report_task SET title=?,prompt=?,schedule_type=?,run_at=?,hour=?,minute=?,week_day=?,week_days=?,workweek=?,schedule_message=?,next_run_at=?,status=CASE WHEN status='paused' THEN 'paused' ELSE 'enabled' END,version=version+1,updated_at=? WHERE task_id=? AND user_id=?",
+                input.title().trim(),input.prompt().trim(),input.scheduleType(),input.runAt(),input.hour(),input.minute(),input.weekDay(),encodeDays(input.weekDays()),input.workweek(),plan.message(),plan.next(),now,id,userId);
             return task(userId,id);
         });
     }
@@ -138,10 +156,10 @@ public class AgentReportService
         return tx.execute(status -> {
             Map<String,Object> row = lockTask(userId,id);
             if (((Number) row.get("version")).intValue() != version) throw new ServiceException("任务已变化，请刷新");
-            long now = System.currentTimeMillis();
-            Long next = "resume".equals(action) ? ReportSchedule.next(fromRow(row), now) : null;
-            jdbc.update("UPDATE agent_report_task SET status=?,next_run_at=?,version=version+1,updated_at=? WHERE task_id=? AND user_id=?",
-                "resume".equals(action) ? "enabled" : "paused",next,now,id,userId);
+            long now = clock.millis();
+            Plan plan = "resume".equals(action) ? plan(fromRow(row), now) : new Plan(null,null);
+            jdbc.update("UPDATE agent_report_task SET status=?,next_run_at=?,schedule_message=?,version=version+1,updated_at=? WHERE task_id=? AND user_id=?",
+                "resume".equals(action) ? "enabled" : "paused",plan.next(),plan.message(),now,id,userId);
             if ("pause".equals(action)) cancelRuns(id,now);
             return task(userId,id);
         });
@@ -152,7 +170,7 @@ public class AgentReportService
         tx.executeWithoutResult(status -> {
             Map<String,Object> row = lockTask(userId,id);
             if (((Number) row.get("version")).intValue() != version) throw new ServiceException("任务已变化，请刷新后删除");
-            long now = System.currentTimeMillis();
+            long now = clock.millis();
             jdbc.update("UPDATE agent_report_task SET deleted=1,next_run_at=NULL,version=version+1,updated_at=? WHERE task_id=? AND user_id=?",now,id,userId);
             cancelRuns(id,now);
         });
@@ -182,7 +200,7 @@ public class AgentReportService
             }
             if (jdbc.queryForObject("SELECT COUNT(*) FROM agent_report_run WHERE task_id=? AND status IN ('queued','running')",Long.class,id) > 0)
                 throw new ServiceException("该任务已有待执行或正在执行的报告");
-            return report(userId,insertRun(task,System.currentTimeMillis(),"manual",requestKey));
+            return report(userId,insertRun(task,clock.millis(),"manual",requestKey));
         });
     }
 
@@ -197,20 +215,44 @@ public class AgentReportService
     /** One claim per worker; overdue recurring slots coalesce into one run, without replaying every missed slot. */
     public Map<String,Object> claim()
     {
-        return tx.execute(status -> {
-            long now = System.currentTimeMillis();
+        for (int attempt = 0; ; attempt++)
+        {
+            try { return claimOnce(); }
+            catch (PessimisticLockingFailureException contention)
+            {
+                // A failed transaction has fully rolled back; no model work has started.
+                if (attempt >= 2) throw contention;
+            }
+        }
+    }
+
+    private Map<String,Object> claimOnce()
+    {
+        return claimTx.execute(status -> {
+            long now = clock.millis();
             jdbc.update("UPDATE agent_report_run SET status='failed',finished_at=?,error='执行超时或网关中断；请检查后手动重跑' WHERE status='running' AND deadline<?",now,now);
-            List<Map<String,Object>> due = jdbc.queryForList("SELECT * FROM agent_report_task t WHERE deleted=0 AND status='enabled' AND next_run_at<=? AND NOT EXISTS (SELECT 1 FROM agent_report_run r WHERE r.task_id=t.task_id AND r.status IN ('queued','running')) ORDER BY next_run_at,task_id LIMIT 1 FOR UPDATE SKIP LOCKED",now);
+            // Plain FOR UPDATE works on MySQL 5.7 and 8.0. Locks are released when this short
+            // transaction commits, before the worker starts generating the report.
+            // After a calendar update/restart, waiting tasks resume without being recreated.
+            List<Map<String,Object>> waiting = jdbc.queryForList("SELECT * FROM agent_report_task WHERE deleted=0 AND status='enabled' AND next_run_at IS NULL AND schedule_message IS NOT NULL ORDER BY updated_at,task_id LIMIT 10 FOR UPDATE");
+            for (Map<String,Object> row : waiting)
+            {
+                Plan plan = plan(fromRow(row),now);
+                jdbc.update("UPDATE agent_report_task SET next_run_at=?,schedule_message=?,updated_at=?,version=version+? WHERE task_id=?",
+                    plan.next(),plan.message(),now,plan.next() == null ? 0 : 1,row.get("task_id"));
+            }
+            List<Map<String,Object>> due = jdbc.queryForList("SELECT * FROM agent_report_task t WHERE deleted=0 AND status='enabled' AND next_run_at<=? AND NOT EXISTS (SELECT 1 FROM agent_report_run r WHERE r.task_id=t.task_id AND r.status IN ('queued','running')) ORDER BY next_run_at,task_id LIMIT 1 FOR UPDATE",now);
             if (!due.isEmpty())
             {
                 Map<String,Object> row = due.get(0);
                 long at = ((Number) row.get("next_run_at")).longValue();
                 insertRun(row,at,"scheduled",null);
-                Long next = "once".equals(row.get("schedule_type")) ? null : ReportSchedule.next(fromRow(row),now);
-                jdbc.update("UPDATE agent_report_task SET next_run_at=?,status=?,version=version+1,updated_at=? WHERE task_id=?",
-                    next,next == null ? "completed" : "enabled",now,row.get("task_id"));
+                boolean once = "once".equals(row.get("schedule_type"));
+                Plan plan = once ? new Plan(null,null) : plan(fromRow(row),now);
+                jdbc.update("UPDATE agent_report_task SET next_run_at=?,schedule_message=?,status=?,version=version+1,updated_at=? WHERE task_id=?",
+                    plan.next(),plan.message(),once ? "completed" : "enabled",now,row.get("task_id"));
             }
-            List<Map<String,Object>> queued = jdbc.queryForList("SELECT * FROM agent_report_run WHERE status='queued' ORDER BY scheduled_at,run_id LIMIT 1 FOR UPDATE SKIP LOCKED");
+            List<Map<String,Object>> queued = jdbc.queryForList("SELECT * FROM agent_report_run WHERE status='queued' ORDER BY scheduled_at,run_id LIMIT 1 FOR UPDATE");
             if (queued.isEmpty()) return null;
             Map<String,Object> run = queued.get(0);
             String lease = UUID.randomUUID().toString();
@@ -223,7 +265,7 @@ public class AgentReportService
     public Long workerOwner(String runId, String lease)
     {
         Map<String,Object> row = one("SELECT r.user_id FROM agent_report_run r JOIN agent_report_task t ON t.task_id=r.task_id WHERE r.run_id=? AND r.lease_token=? AND r.status='running' AND r.deadline>? AND t.deleted=0 AND t.status<>'paused'",
-            runId,lease,System.currentTimeMillis());
+            runId,lease,clock.millis());
         return ((Number) row.get("user_id")).longValue();
     }
 
@@ -234,7 +276,7 @@ public class AgentReportService
         if (error != null && error.length() > 1000) error = error.substring(0,1000);
         if (error == null && (content == null || content.isBlank())) throw new ServiceException("报告正文不能为空");
         if (jdbc.update("UPDATE agent_report_run SET status=?,content=?,error=?,finished_at=? WHERE run_id=? AND lease_token=? AND status='running' AND deadline>?",
-            error == null ? "succeeded" : "failed",error == null ? content : null,error,System.currentTimeMillis(),runId,lease,System.currentTimeMillis()) != 1)
+            error == null ? "succeeded" : "failed",error == null ? content : null,error,clock.millis(),runId,lease,clock.millis()) != 1)
             throw new ServiceException("执行已过期或取消");
     }
 
@@ -242,7 +284,17 @@ public class AgentReportService
     { return one("SELECT * FROM agent_report_task WHERE user_id=? AND task_id=? AND deleted=0 FOR UPDATE",userId,id); }
 
     private static ReportTaskInput fromRow(Map<String,Object> row)
-    { return new ReportTaskInput((String)row.get("title"),(String)row.get("prompt"),(String)row.get("schedule_type"),(String)row.get("run_at"),number(row.get("hour")),number(row.get("minute")),number(row.get("week_day")),null,null); }
+    { return new ReportTaskInput((String)row.get("title"),(String)row.get("prompt"),(String)row.get("schedule_type"),(String)row.get("run_at"),number(row.get("hour")),number(row.get("minute")),number(row.get("week_day")),null,null,decodeDays(row.get("week_days")),(String)row.get("workweek")); }
+    private record Plan(Long next, String message) {}
+    private static Plan plan(ReportTaskInput input, long now)
+    {
+        try { return new Plan(ReportSchedule.next(input,now),null); }
+        catch (ReportHolidayCalendar.MissingYearException missing) { return new Plan(null,missing.getMessage()); }
+    }
+    private static String encodeDays(List<Integer> days)
+    { return days == null ? null : String.join(",",days.stream().map(String::valueOf).toList()); }
+    private static List<Integer> decodeDays(Object value)
+    { return value == null ? null : Arrays.stream(value.toString().split(",")).map(Integer::valueOf).toList(); }
     private static Integer number(Object value) { return value == null ? null : ((Number)value).intValue(); }
     private static void requireKey(String key)
     { if (key == null || !key.matches("[A-Za-z0-9_:-]{1,128}")) throw new ServiceException("缺少有效的请求标识"); }
